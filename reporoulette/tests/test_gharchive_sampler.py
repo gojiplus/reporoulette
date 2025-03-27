@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 # Import the actual class - use the correct module path
-from reporoulette.samplers.gh_archive_sampler import GHArchiveSampler
+from reporoulette.samplers.gh_sampler import GHArchiveSampler
 
 class TestGHArchiveSampler(unittest.TestCase):
     
