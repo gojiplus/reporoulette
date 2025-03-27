@@ -6,8 +6,9 @@ from typing import Optional, Dict, Any, Union, List
 from .samplers.id_sampler import IDSampler
 from .samplers.temporal_sampler import TemporalSampler
 from .samplers.bigquery_sampler import BigQuerySampler
+from .samplers.bigquery_sampler import GHSampler
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 # Set up logging
 logging.basicConfig(
