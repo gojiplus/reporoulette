@@ -96,14 +96,18 @@ class TemporalSampler(BaseSampler):
         self, 
         n_samples: int = 10, 
         per_page: int = 100,
+        min_wait: float = 1.0,  # Increased default wait time
+        max_attempts: int = 50,  # Add max attempts limit
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
         Sample repositories by randomly selecting time periods.
         
         Args:
-            n_samples: Number of repositories to collect
+            n_samples: Target number of repositories to collect (may return fewer)
             per_page: Number of results per page (max 100)
+            min_wait: Minimum wait time between API requests
+            max_attempts: Maximum number of time periods to try
             **kwargs: Additional filters to apply
             
         Returns:
@@ -118,7 +122,8 @@ class TemporalSampler(BaseSampler):
         self.attempts = 0
         self.success_count = 0
         
-        while len(valid_repos) < n_samples:
+        # Set a reasonable limit on attempts
+        while self.attempts < max_attempts:
             # Check rate limit
             remaining = self._check_rate_limit(headers)
             if remaining <= self.rate_limit_safety:
@@ -146,10 +151,11 @@ class TemporalSampler(BaseSampler):
                 # Take the first language for the query, we'll filter the rest later
                 query += f" language:{kwargs['languages'][0]}"
                 
-            # Construct the URL
+            # Construct the URL - always get first page only
             url = f"https://api.github.com/search/repositories?q={query}&sort=updated&order=desc&per_page={per_page}"
             
             try:
+                self.logger.info(f"Querying time period {start_time} to {end_time}")
                 response = requests.get(url, headers=headers)
                 self.attempts += 1
                 
@@ -161,10 +167,6 @@ class TemporalSampler(BaseSampler):
                         repos = results['items']
                         self.success_count += 1
                         
-                        # Random selection if we got more than we need
-                        if len(repos) > (n_samples - len(valid_repos)):
-                            repos = random.sample(repos, min(len(repos), n_samples - len(valid_repos)))
-                            
                         # Process repos to match our standard format
                         for repo in repos:
                             valid_repos.append({
@@ -190,15 +192,28 @@ class TemporalSampler(BaseSampler):
                             break
                     else:
                         self.logger.debug(f"No repositories found in period {start_time} to {end_time}")
+                elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
+                    # Handle rate limiting - wait until reset
+                    wait_time = self._calculate_rate_limit_wait_time(headers)
+                    self.logger.warning(f"Rate limit exceeded. Waiting {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    # Don't count this as an attempt
+                    self.attempts -= 1
+                    continue
                 else:
                     self.logger.warning(f"API error: {response.status_code}, {response.text}")
                     
-                # Small delay to avoid hitting rate limits
-                time.sleep(0.5)
+                # Mandatory wait between requests to avoid rate limiting
+                # Use a fixed wait time with small jitter
+                wait_time = min_wait + random.uniform(0, 0.5)
+                self.logger.debug(f"Waiting {wait_time:.1f} seconds before next request...")
+                time.sleep(wait_time)
                 
             except Exception as e:
                 self.logger.error(f"Error sampling time period {start_time} to {end_time}: {str(e)}")
-                time.sleep(1)  # Longer delay on error
+                time.sleep(min_wait * 2)  # Longer delay on error
+        
+        self.logger.info(f"Completed with {self.attempts} attempts, found {len(valid_repos)} repositories")
         
         # Apply any filters
         self.results = self._filter_repos(valid_repos, **kwargs)
