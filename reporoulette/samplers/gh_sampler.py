@@ -10,7 +10,7 @@ logging.basicConfig(
 )
 
 # Create a simple class to house the gh_sampler method
-class GitHubSampler:
+class GHArchiveSampler:
     def __init__(self, seed=None):
         self.logger = logging.getLogger("GitHubSampler")
         self._seed = seed
