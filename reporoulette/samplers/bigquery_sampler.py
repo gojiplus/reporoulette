@@ -162,9 +162,9 @@ class BigQuerySampler(BaseSampler):
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Sample repositories using the cost-effective datetime approach.
+        Sample repositories using the cost-effective datetime approach with hour tables.
         
-        This method samples GitHub repositories by randomly selecting hours
+        This method samples GitHub repositories by randomly selecting specific hours
         from the GitHub archive and collecting repository information.
         
         Args:
@@ -188,13 +188,13 @@ class BigQuerySampler(BaseSampler):
         
         self.logger.info(f"Adjusted hours_to_sample to {hours_to_sample} to ensure enough samples")
         
-        # Query to sample repositories from random time periods
+        # Query to sample repositories from random time periods using hour tables
         query = f"""
         -- Define parameters
         DECLARE hours_to_sample INT64 DEFAULT {hours_to_sample};
         DECLARE repos_per_hour INT64 DEFAULT {repos_per_hour};
         DECLARE years_back INT64 DEFAULT {years_back};
-
+    
         -- Create a table of random dates and hours to sample from
         CREATE TEMP TABLE random_dates AS (
           SELECT 
@@ -203,8 +203,8 @@ class BigQuerySampler(BaseSampler):
           FROM 
             UNNEST(GENERATE_ARRAY(1, hours_to_sample))
         );
-
-        -- Sample repositories from each random date-hour
+    
+        -- Sample repositories from each random hour
         WITH sampled_repos AS (
           SELECT
             date_record.day AS sample_day,
@@ -217,8 +217,8 @@ class BigQuerySampler(BaseSampler):
             ROW_NUMBER() OVER (PARTITION BY date_record.day, date_record.hour ORDER BY RAND({self._seed})) AS rn
           FROM random_dates date_record
           CROSS JOIN (
-            -- Dynamically access table for each date-hour
-            SELECT CONCAT('`githubarchive.day.', day, '`') AS table_name
+            -- Dynamically access hour table for each date-hour
+            SELECT CONCAT('`githubarchive.hour.', day, FORMAT('%02d', hour), '`') AS table_name
             FROM random_dates
           ) table_names,
           -- Use a dynamic table reference
@@ -226,7 +226,7 @@ class BigQuerySampler(BaseSampler):
             (SELECT AS STRUCT
               ARRAY(
                 EXECUTE IMMEDIATE FORMAT(
-                  "SELECT repo, actor, created_at, type FROM %s TABLESAMPLE SYSTEM (1 PERCENT) WHERE type IN ('PushEvent', 'CreateEvent', 'PullRequestEvent') LIMIT %d",
+                  "SELECT repo, actor, created_at, type FROM %s WHERE type IN ('PushEvent', 'CreateEvent', 'PullRequestEvent') LIMIT %d",
                   table_names.table_name, repos_per_hour * 10
                 )
               ) AS events
@@ -261,7 +261,7 @@ class BigQuerySampler(BaseSampler):
         self.results = valid_repos
         
         # Log summary of results
-        self.logger.info(f"Found {len(valid_repos)} repositories with BigQuery datetime sampling")
+        self.logger.info(f"Found {len(valid_repos)} repositories with BigQuery hour sampling")
         
         return self.results
     
