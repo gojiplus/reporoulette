@@ -5,30 +5,17 @@ import gzip
 import json
 from datetime import datetime
 
-class TestGHSampler(unittest.TestCase):
+class TestGHArchiveSampler(unittest.TestCase):
     
     def setUp(self):
-        # Create a mock instance with basic required attributes
-        self.instance = MagicMock()
-        self.instance.logger = MagicMock()
-        self.instance._seed = 42  # Fixed seed for reproducibility
+        # Import the actual class instead of using source inspection
+        from reporoulette.samplers.gh_archive_sampler import GHArchiveSampler
         
-        # Attach the method we want to test to our mock instance
-        from types import MethodType
-        import sys
-        # Assuming the code is in a module named 'repo_sampler'
-        # If it's in a different module, replace accordingly
-        module_name = 'your_module_name'
-        if module_name not in sys.modules:
-            import types
-            sys.modules[module_name] = types.ModuleType(module_name)
+        # Create a real instance with controlled parameters
+        self.sampler = GHArchiveSampler(seed=42)
         
-        # Get the function and bind it to our mock instance
-        import inspect
-        source = inspect.getsource(gh_sampler)
-        namespace = {}
-        exec(source, namespace)
-        self.instance.gh_sampler = MethodType(namespace['gh_sampler'], self.instance)
+        # Mock the logger to avoid log output during tests
+        self.sampler.logger = MagicMock()
     
     @patch('requests.get')
     def test_gh_sampler_basic(self, mock_get):
@@ -83,8 +70,8 @@ class TestGHSampler(unittest.TestCase):
         mock_response.raw = gz_content
         mock_get.return_value = mock_response
         
-        # Call the function with minimal parameters for testing
-        result = self.instance.gh_sampler(
+        # Call the method with minimal parameters for testing
+        result = self.sampler.gh_sampler(
             n_samples=2,
             hours_to_sample=1,
             repos_per_hour=3,
@@ -103,9 +90,60 @@ class TestGHSampler(unittest.TestCase):
         self.assertFalse(any(repo['full_name'] == 'owner4/repo4' for repo in result))
         
         # Verify that the instance attributes were updated
-        self.assertEqual(self.instance.attempts, 1)
-        self.assertEqual(self.instance.success_count, 1)
-        self.assertEqual(self.instance.results, result)
+        self.assertEqual(self.sampler.attempts, 1)
+        self.assertEqual(self.sampler.success_count, 1)
+        self.assertEqual(self.sampler.results, result)
+    
+    @patch('requests.get')
+    def test_sample_method(self, mock_get):
+        # Mock the response from requests.get
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        
+        # Create sample GitHub events (same as above)
+        events = [
+            {
+                "type": "PushEvent",
+                "repo": {
+                    "name": "owner1/repo1",
+                    "url": "https://github.com/owner1/repo1"
+                },
+                "created_at": "2023-01-01T12:00:00Z"
+            },
+            {
+                "type": "CreateEvent",
+                "repo": {
+                    "name": "owner2/repo2",
+                    "url": "https://github.com/owner2/repo2"
+                },
+                "created_at": "2023-01-01T12:05:00Z"
+            }
+        ]
+        
+        # Gzip the events and prepare the mock response
+        gz_content = io.BytesIO()
+        with gzip.GzipFile(fileobj=gz_content, mode='w') as f:
+            for event in events:
+                f.write((json.dumps(event) + '\n').encode('utf-8'))
+        gz_content.seek(0)
+        
+        mock_response.raw = gz_content
+        mock_get.return_value = mock_response
+        
+        # Call the abstract sample method which should delegate to gh_sampler
+        result = self.sampler.sample(
+            n_samples=1,
+            hours_to_sample=1,
+            repos_per_hour=2
+        )
+        
+        # Verify the results
+        self.assertEqual(len(result), 1)
+        self.assertTrue(result[0]['full_name'] in ['owner1/repo1', 'owner2/repo2'])
+        
+        # Verify that the instance attributes were updated
+        self.assertEqual(self.sampler.attempts, 1)
+        self.assertEqual(self.sampler.success_count, 1)
         
     @patch('requests.get')
     def test_gh_sampler_error_handling(self, mock_get):
@@ -113,7 +151,7 @@ class TestGHSampler(unittest.TestCase):
         mock_get.side_effect = Exception("Mock network error")
         
         # Call the function
-        result = self.instance.gh_sampler(
+        result = self.sampler.gh_sampler(
             n_samples=2,
             hours_to_sample=1,
             repos_per_hour=2,
@@ -124,9 +162,9 @@ class TestGHSampler(unittest.TestCase):
         self.assertEqual(len(result), 0)
         
         # Verify the instance attributes were updated
-        self.assertEqual(self.instance.attempts, 1)
-        self.assertEqual(self.instance.success_count, 0)
-        self.assertEqual(self.instance.results, [])
+        self.assertEqual(self.sampler.attempts, 1)
+        self.assertEqual(self.sampler.success_count, 0)
+        self.assertEqual(self.sampler.results, [])
 
 if __name__ == '__main__':
     unittest.main()
