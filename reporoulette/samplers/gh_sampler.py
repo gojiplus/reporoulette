@@ -50,6 +50,25 @@ class GHArchiveSampler(BaseSampler):
             
         self.logger.info(f"Initialized GHArchiveSampler")
     
+    def sample(self, n_samples: int = 100, **kwargs) -> List[Dict[str, Any]]:
+        """
+        Sample repositories using the GH Archive approach.
+        
+        This is the implementation of the abstract method from BaseSampler,
+        which delegates to the gh_sampler method with the provided parameters.
+        
+        Args:
+            n_samples: Number of repositories to sample
+            **kwargs: Additional parameters to pass to gh_sampler
+            
+        Returns:
+            List of repository data
+        """
+        self.logger.info(f"Sample method called with n_samples={n_samples}")
+        
+        # Call the main implementation method
+        return self.gh_sampler(n_samples=n_samples, **kwargs)
+    
     def gh_sampler(
         self,
         n_samples: int = 100,
