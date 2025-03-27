@@ -9,7 +9,7 @@ class TestGHArchiveSampler(unittest.TestCase):
     
     def setUp(self):
         # Import the actual class instead of using source inspection
-        from reporoulette.samplers.gh_archive_sampler import GHArchiveSampler
+        from reporoulette.samplers.gh_sampler import GHArchiveSampler
         
         # Create a real instance with controlled parameters
         self.sampler = GHArchiveSampler(seed=42)
