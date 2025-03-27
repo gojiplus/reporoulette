@@ -123,6 +123,36 @@ specialty_repos = sampler.sample(
 - Requires Google Cloud Platform account and billing
 - Dataset may have a slight delay (typically 24-48 hours)
 
+### 4. GH Archive Sampler
+
+```python
+rom reporoulette.samplers import GHArchiveSampler
+
+sampler = GHArchiveSampler(seed=42)
+    
+    # Sample repositories using the gh_sampler method directly
+    # (This is the method implemented by GHArchiveSampler, not the abstract sample method)
+repos = sampler.gh_sampler(
+        n_samples=10,              # Number of repositories to sample
+        hours_to_sample=5,         # Sample from 5 random hours
+        repos_per_hour=3,          # Collect up to 3 repos per hour
+        years_back=3,              # Sample from last 3 years
+        event_types=["PushEvent", "CreateEvent", "PullRequestEvent"]  # Types of events to consider
+    )
+    
+    
+    # Display the sampled repositories
+print(f"Successfully sampled {len(repos)} repositories:\n")
+    
+for i, repo in enumerate(repos, 1):
+    print(f"{i}. {repo['full_name']}")
+    print(f"   URL: {repo['html_url']}")
+    print(f"   Language: {repo.get('language', 'Unknown')}")
+    print(f"   Event: {repo.get('event_type')}")
+    print(f"   Sampled from: {repo.get('sampled_from')}")
+    print()
+```
+
 ## 📊 Example Use Cases
 
 - **Academic Research**: Study coding practices across different languages and communities
