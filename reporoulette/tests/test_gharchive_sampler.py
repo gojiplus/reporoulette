@@ -4,20 +4,25 @@ import io
 import gzip
 import json
 from datetime import datetime
+import os
+import sys
+
+# Add the parent directory to sys.path to find the package
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
+# Import the actual class - use the correct module path
+from reporoulette.samplers.gh_archive_sampler import GHArchiveSampler
 
 class TestGHArchiveSampler(unittest.TestCase):
     
     def setUp(self):
-        # Import the actual class instead of using source inspection
-        from reporoulette.samplers.gh_sampler import GHArchiveSampler
-        
         # Create a real instance with controlled parameters
         self.sampler = GHArchiveSampler(seed=42)
         
         # Mock the logger to avoid log output during tests
         self.sampler.logger = MagicMock()
     
-    @patch('requests.get')
+    @patch('reporoulette.samplers.gh_archive_sampler.requests.get')
     def test_gh_sampler_basic(self, mock_get):
         # Mock the response from requests.get
         mock_response = MagicMock()
@@ -94,7 +99,7 @@ class TestGHArchiveSampler(unittest.TestCase):
         self.assertEqual(self.sampler.success_count, 1)
         self.assertEqual(self.sampler.results, result)
     
-    @patch('requests.get')
+    @patch('reporoulette.samplers.gh_archive_sampler.requests.get')
     def test_sample_method(self, mock_get):
         # Mock the response from requests.get
         mock_response = MagicMock()
@@ -145,7 +150,7 @@ class TestGHArchiveSampler(unittest.TestCase):
         self.assertEqual(self.sampler.attempts, 1)
         self.assertEqual(self.sampler.success_count, 1)
         
-    @patch('requests.get')
+    @patch('reporoulette.samplers.gh_archive_sampler.requests.get')
     def test_gh_sampler_error_handling(self, mock_get):
         # Mock a request exception
         mock_get.side_effect = Exception("Mock network error")
