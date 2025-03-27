@@ -6,8 +6,9 @@ from typing import Optional, Dict, Any, Union, List
 from .samplers.id_sampler import IDSampler
 from .samplers.temporal_sampler import TemporalSampler
 from .samplers.bigquery_sampler import BigQuerySampler
+from .samplers.gh_sampler import GHArchiveSampler
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 # Set up logging
 logging.basicConfig(
@@ -42,6 +43,8 @@ def sample(
         sampler = IDSampler(token=token)
     elif method.lower() == 'temporal':
         sampler = TemporalSampler(token=token)
+    elif method.lower() == 'archive':
+        sampler = GHArchiveSampler()
     elif method.lower() == 'bigquery':
         credentials_path = kwargs.pop('credentials_path', 
                                      os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))
@@ -68,4 +71,4 @@ def sample(
     }
 
 # Export samplers
-__all__ = ['IDSampler', 'TemporalSampler', 'BigQuerySampler', 'sample']
+__all__ = ['IDSampler', 'TemporalSampler', 'BigQuerySampler', 'GHArchiveSampler', 'sample']
