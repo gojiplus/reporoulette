@@ -4,4 +4,4 @@ from .temporal_sampler import TemporalSampler
 from .bigquery_sampler import BigQuerySampler
 from .bigquery_sampler import GHArchiveSampler
 
-__all__ = ['IDSampler', 'TemporalSampler', 'BigQuerySampler']
+__all__ = ['IDSampler', 'TemporalSampler', 'BigQuerySampler', 'GHArchiveSampler']
