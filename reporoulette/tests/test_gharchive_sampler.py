@@ -99,7 +99,7 @@ class TestGHArchiveSampler(unittest.TestCase):
         self.assertEqual(self.sampler.success_count, 1)
         self.assertEqual(self.sampler.results, result)
     
-    @patch('reporoulette.samplers.gh_archive_sampler.requests.get')
+    @patch('reporoulette.samplers.gh_sampler.requests.get')
     def test_sample_method(self, mock_get):
         # Mock the response from requests.get
         mock_response = MagicMock()
@@ -150,7 +150,7 @@ class TestGHArchiveSampler(unittest.TestCase):
         self.assertEqual(self.sampler.attempts, 1)
         self.assertEqual(self.sampler.success_count, 1)
         
-    @patch('reporoulette.samplers.gh_archive_sampler.requests.get')
+    @patch('reporoulette.samplers.gh_sampler.requests.get')
     def test_gh_sampler_error_handling(self, mock_get):
         # Mock a request exception
         mock_get.side_effect = Exception("Mock network error")
