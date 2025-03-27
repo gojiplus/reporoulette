@@ -85,7 +85,7 @@ filtered_repos = sampler.sample(
 
 ### 3. 🔍 BigQuery Sampling
 
-Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. Perfect for research requiring large samples or specific criteria.
+Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. We hit the hour files than the much larger day files (which can really run up a bill).
 
 ```python
 from reporoulette import BigQuerySampler
