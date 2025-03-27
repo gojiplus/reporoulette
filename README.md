@@ -1,4 +1,4 @@
-## Repo Roulette 🎲
+## RepoRoulette 🎲: Randomly Sample Repositories from GitHub
 
 > Spin the wheel and see which GitHub repositories you get!
 
@@ -6,12 +6,6 @@
 [![License](https://img.shields.io/pypi/l/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![Downloads](https://static.pepy.tech/badge/reporoulette)](https://pepy.tech/project/reporoulette)
 
-Randomly sample repositories from GitHub. 
-
-## 🌟 Features
-
-- **Multiple sampling methods** to meet different research needs
-- **Avoid the 1,000 result limitation** of GitHub's Search API
 
 ## 🚀 Installation
 
@@ -20,7 +14,7 @@ Randomly sample repositories from GitHub.
 pip install reporoulette
 
 # From source
-git clone https://github.com/username/reporoulette.git
+git clone https://github.com/gojiplus/reporoulette.git
 cd reporoulette
 pip install -e .
 ```
@@ -48,9 +42,7 @@ print(f"Samples collected: {len(repos)}")
 ```
 
 **Advantages:**
-- Most unbiased sampling method
-- Covers the entire GitHub ecosystem
-- Simple approach with minimal API calls
+- Simple
 
 **Limitations:**
 - Lower hit rate (many IDs are invalid)
@@ -91,10 +83,6 @@ filtered_repos = sampler.sample(
 - Can filter by repository characteristics
 - Allows for stratified sampling by time periods
 
-**Limitations:**
-- Limited to repositories with recent activity
-- Some time periods may have fewer repositories
-
 ### 3. 🔍 BigQuery Sampling
 
 Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. Perfect for research requiring large samples or specific criteria.
@@ -134,7 +122,6 @@ specialty_repos = sampler.sample(
 - Could be expensive
 - Requires Google Cloud Platform account and billing
 - Dataset may have a slight delay (typically 24-48 hours)
-- Requires knowledge of SQL for custom queries
 
 ## 📊 Example Use Cases
 
@@ -144,34 +131,9 @@ specialty_repos = sampler.sample(
 - **Trend Analysis**: Identify emerging technologies and practices
 - **Security Research**: Find vulnerability patterns across repository types
 
-## 🛠️ Configuration
-
-Create a `.reporoulette.yml` file in your home directory or project root:
-
-```yaml
-github:
-  token: "your_github_token"
-  rate_limit_safety: 100  # Stop when this many requests remain
-
-bigquery:
-  credentials_path: "path/to/credentials.json"
-  project_id: "your-gcp-project"
-
-sampling:
-  default_method: "temporal"
-  cache_results: true
-  cache_path: "~/.reporoulette/cache"
-```
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## 📜 License
 
