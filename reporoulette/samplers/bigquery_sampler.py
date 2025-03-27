@@ -23,7 +23,8 @@ class BigQuerySampler(BaseSampler):
     def __init__(
         self,
         credentials_path: Optional[str] = None,
-        project_id: Optional[str] = None
+        project_id: Optional[str] = None,
+        seed: Optional[int] = None  # Add seed parameter
     ):
         """
         Initialize the BigQuery sampler.
@@ -31,8 +32,14 @@ class BigQuerySampler(BaseSampler):
         Args:
             credentials_path: Path to Google Cloud credentials JSON file
             project_id: Google Cloud project ID
+            seed: Random seed for reproducibility
         """
         super().__init__(token=None)  # GitHub token not used for BigQuery
+        
+        # Set random seed if provided
+        if seed is not None:
+            random.seed(seed)
+            self.logger.info(f"Random seed set to: {seed}")
         
         if not BIGQUERY_AVAILABLE:
             raise ImportError(
@@ -120,6 +127,9 @@ class BigQuerySampler(BaseSampler):
         where_clause = " AND ".join(conditions)
         
         # Build the query
+        # Use a consistent seed for the random function in BigQuery if a seed was provided
+        rand_function = "RAND()" if not hasattr(self, '_seed') else f"RAND({self._seed})"
+        
         query = f"""
         SELECT
             r.id,
@@ -138,7 +148,7 @@ class BigQuerySampler(BaseSampler):
         FROM 
             `bigquery-public-data.github_repos.sample_repos` r
         WHERE {where_clause}
-        ORDER BY RAND()
+        ORDER BY {rand_function}
         LIMIT {n_samples}
         """
         
