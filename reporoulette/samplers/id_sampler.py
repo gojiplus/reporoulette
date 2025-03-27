@@ -1,6 +1,7 @@
 # reporoulette/samplers/id_sampler.py
 import random
 import time
+import logging
 from typing import List, Dict, Any, Optional
 
 import requests
@@ -20,7 +21,8 @@ class IDSampler(BaseSampler):
         min_id: int = 1,
         max_id: int = 500000000,
         rate_limit_safety: int = 100,
-        seed: Optional[int] = None  # Add seed parameter
+        seed: Optional[int] = None,  # Add seed parameter
+        log_level: int = logging.INFO
     ):
         """
         Initialize the ID sampler.
@@ -31,8 +33,21 @@ class IDSampler(BaseSampler):
             max_id: Maximum repository ID to sample from
             rate_limit_safety: Stop when this many API requests remain
             seed: Random seed for reproducibility
+            log_level: Logging level (default: logging.INFO)
         """
         super().__init__(token)
+        
+        # Configure logger
+        self.logger = logging.getLogger(f"{self.__class__.__name__}")
+        self.logger.setLevel(log_level)
+        
+        # Create console handler if not already present
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(log_level)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
         
         # Set random seed if provided
         if seed is not None:
@@ -42,16 +57,24 @@ class IDSampler(BaseSampler):
         self.min_id = min_id
         self.max_id = max_id
         self.rate_limit_safety = rate_limit_safety
+        
+        self.logger.info(f"Initialized IDSampler with min_id={min_id}, max_id={max_id}")
     
     def _check_rate_limit(self, headers: Dict[str, str]) -> int:
         """Check GitHub API rate limit and return remaining requests."""
         try:
+            self.logger.debug("Checking GitHub API rate limit")
             response = requests.get("https://api.github.com/rate_limit", headers=headers)
             if response.status_code == 200:
                 data = response.json()
-                return data['resources']['core']['remaining']
+                remaining = data['resources']['core']['remaining']
+                reset_time = data['resources']['core']['reset']
+                self.logger.debug(f"Rate limit status: {remaining} requests remaining, reset at timestamp {reset_time}")
+                return remaining
+            self.logger.warning(f"Failed to check rate limit. Status code: {response.status_code}")
             return 0
-        except Exception:
+        except Exception as e:
+            self.logger.error(f"Error checking rate limit: {str(e)}")
             return 0
     
     def sample(
@@ -73,25 +96,57 @@ class IDSampler(BaseSampler):
         Returns:
             List of repository data
         """
+        self.logger.info(f"Starting sampling: target={n_samples}, max_attempts={max_attempts}")
+        
         headers = {}
         if self.token:
+            self.logger.info("Using GitHub API token for authentication")
             headers['Authorization'] = f'token {self.token}'
+        else:
+            self.logger.warning("No GitHub API token provided. Rate limits will be restricted.")
         
         valid_repos = []
         self.attempts = 0
         self.success_count = 0
         
+        # Log request rate/interval
+        self.logger.info(f"Minimum wait between requests: {min_wait} seconds")
+        
+        # Log filter criteria if any
+        if kwargs:
+            self.logger.info(f"Filter criteria: {kwargs}")
+        
+        start_time = time.time()
+        
         while len(valid_repos) < n_samples and self.attempts < max_attempts:
-            # Check rate limit
-            remaining = self._check_rate_limit(headers)
-            if remaining <= self.rate_limit_safety:
-                self.logger.warning(
-                    f"Approaching GitHub API rate limit. Stopping with {len(valid_repos)} samples."
+            # Periodically log progress
+            if self.attempts > 0 and self.attempts % 10 == 0:
+                elapsed = time.time() - start_time
+                rate = self.attempts / elapsed if elapsed > 0 else 0
+                success_rate = (self.success_count / self.attempts) * 100 if self.attempts > 0 else 0
+                self.logger.info(
+                    f"Progress: {len(valid_repos)}/{n_samples} repos found, "
+                    f"{self.attempts} attempts ({success_rate:.1f}% success rate), "
+                    f"{rate:.2f} requests/sec"
                 )
-                break
-                
+            
+            # Check rate limit every 10 attempts or if we're getting close
+            should_check_limit = self.attempts % 10 == 0 or (
+                self.attempts > 0 and (self.attempts % max(max_attempts // 20, 1)) == 0
+            )
+            
+            if should_check_limit:
+                remaining = self._check_rate_limit(headers)
+                if remaining <= self.rate_limit_safety:
+                    self.logger.warning(
+                        f"Approaching GitHub API rate limit ({remaining} remaining). "
+                        f"Stopping with {len(valid_repos)} samples."
+                    )
+                    break
+                    
             # Generate random repository ID
             repo_id = random.randint(self.min_id, self.max_id)
+            self.logger.debug(f"Trying repository ID: {repo_id}")
             
             # Try to fetch the repository by ID
             url = f"https://api.github.com/repositories/{repo_id}"
@@ -103,6 +158,15 @@ class IDSampler(BaseSampler):
                 if response.status_code == 200:
                     repo_data = response.json()
                     self.success_count += 1
+                    
+                    # Log repository details at debug level
+                    self.logger.debug(
+                        f"Repository details: name={repo_data['name']}, "
+                        f"owner={repo_data['owner']['login']}, "
+                        f"stars={repo_data.get('stargazers_count', 0)}, "
+                        f"language={repo_data.get('language')}"
+                    )
+                    
                     valid_repos.append({
                         'id': repo_id,
                         'name': repo_data['name'],
@@ -118,7 +182,10 @@ class IDSampler(BaseSampler):
                         'language': repo_data.get('language'),
                         'visibility': repo_data.get('visibility', 'unknown'),
                     })
-                    self.logger.info(f"Found valid repository: {repo_data['full_name']}")
+                    self.logger.info(
+                        f"Found valid repository ({len(valid_repos)}/{n_samples}): "
+                        f"{repo_data['full_name']} (id: {repo_id})"
+                    )
                 elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
                     # Handle rate limiting
                     wait_time = 60  # Simple fallback
@@ -128,8 +195,12 @@ class IDSampler(BaseSampler):
                             reset_time = int(response.headers['x-ratelimit-reset'])
                             current_time = time.time()
                             wait_time = max(reset_time - current_time + 5, 10)
-                    except Exception:
-                        pass
+                            self.logger.warning(
+                                f"Rate limit exceeded. Reset at {time.ctime(reset_time)}. "
+                                f"Waiting {wait_time:.1f} seconds..."
+                            )
+                    except Exception as e:
+                        self.logger.error(f"Error parsing rate limit headers: {str(e)}")
                         
                     self.logger.warning(f"Rate limit exceeded. Waiting {wait_time:.1f} seconds...")
                     time.sleep(wait_time)
@@ -137,7 +208,10 @@ class IDSampler(BaseSampler):
                     self.attempts -= 1
                     continue
                 else:
-                    self.logger.debug(f"Invalid repository ID: {repo_id} (Status code: {response.status_code})")
+                    self.logger.debug(
+                        f"Invalid repository ID: {repo_id} "
+                        f"(Status code: {response.status_code}, Response: {response.text[:100]}...)"
+                    )
                     
                 # Wait between requests with a small random jitter
                 wait_time = min_wait + random.uniform(0, min_wait * 0.5)
@@ -147,8 +221,26 @@ class IDSampler(BaseSampler):
                 self.logger.error(f"Error sampling repository ID {repo_id}: {str(e)}")
                 time.sleep(min_wait * 5)  # Longer delay on error
         
-        self.logger.info(f"Completed with {self.attempts} attempts, found {len(valid_repos)} repositories")
+        # Calculate final stats
+        elapsed = time.time() - start_time
+        success_rate = (self.success_count / self.attempts) * 100 if self.attempts > 0 else 0
+        rate = self.attempts / elapsed if elapsed > 0 else 0
+        
+        self.logger.info(
+            f"Sampling completed in {elapsed:.2f} seconds: "
+            f"{self.attempts} attempts, found {len(valid_repos)} repositories "
+            f"({success_rate:.1f}% success rate, {rate:.2f} requests/sec)"
+        )
         
         # Apply any filters
+        filtered_count_before = len(valid_repos)
         self.results = self._filter_repos(valid_repos, **kwargs)
+        filtered_count_after = len(self.results)
+        
+        if filtered_count_before != filtered_count_after:
+            self.logger.info(
+                f"Applied filters: {filtered_count_before - filtered_count_after} repositories filtered out, "
+                f"{filtered_count_after} repositories remaining"
+            )
+        
         return self.results

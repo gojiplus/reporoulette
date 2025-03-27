@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reporoulette"
-version = "0.1.0"
+version = "0.1.1"
 description = "Random sampling of GitHub repositories"
 readme = "README.md"
 authors = [
@@ -32,7 +32,65 @@ bigquery = [
     "google-cloud-bigquery>=2.0.0",
     "google-auth>=1.30.0",
 ]
+docs = [
+    "sphinx>=4.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.15.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=4.0.0",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/gojiplus/reporoulette"
 "Bug Tracker" = "https://github.com/gojiplus/reporoulette/issues"
+"Documentation" = "https://reporoulette.readthedocs.io"
+
+[tool.sphinx]
+project = "reporoulette"
+author = "Gaurav Sood"
+copyright = "2025, Gaurav Sood"
+version = "0.1.1"
+release = "0.1.1"
+language = "en"
+extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.napoleon",
+    "myst_parser",
+]
+html_theme = "sphinx_rtd_theme"
+
+[tool.reporoulette.logging]
+version = 1
+disable_existing_loggers = false
+
+[tool.reporoulette.logging.formatters.standard]
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+datefmt = "%Y-%m-%d %H:%M:%S"
+
+[tool.reporoulette.logging.handlers.console]
+class = "logging.StreamHandler"
+level = "INFO"
+formatter = "standard"
+stream = "ext://sys.stdout"
+
+[tool.reporoulette.logging.handlers.file]
+class = "logging.FileHandler"
+level = "DEBUG"
+formatter = "standard"
+filename = "reporoulette.log"
+encoding = "utf8"
+
+[tool.reporoulette.logging.loggers.reporoulette]
+level = "INFO"
+handlers = ["console", "file"]
+propagate = false
+
+[tool.reporoulette.logging.root]
+level = "WARNING"
+handlers = ["console"]

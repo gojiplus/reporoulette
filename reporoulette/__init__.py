@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any, Union, List
 from .samplers.id_sampler import IDSampler
 from .samplers.temporal_sampler import TemporalSampler
 from .samplers.bigquery_sampler import BigQuerySampler
-from .samplers.bigquery_sampler import GHArchiveSampler
+from .samplers.gh_sampler import GHArchiveSampler
 
 __version__ = '0.1.1'
 
