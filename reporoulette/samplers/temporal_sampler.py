@@ -8,6 +8,9 @@ import requests
 
 from .base import BaseSampler
 
+# Add to the existing imports
+import random
+
 class TemporalSampler(BaseSampler):
     """
     Sample repositories by randomly selecting time points and fetching repos updated in those periods.
@@ -20,7 +23,8 @@ class TemporalSampler(BaseSampler):
         token: Optional[str] = None,
         start_date: Optional[Union[datetime, str]] = None,
         end_date: Optional[Union[datetime, str]] = None,
-        rate_limit_safety: int = 100
+        rate_limit_safety: int = 100,
+        seed: Optional[int] = None  # Add seed parameter
     ):
         """
         Initialize the temporal sampler.
@@ -30,8 +34,14 @@ class TemporalSampler(BaseSampler):
             start_date: Start of date range to sample from
             end_date: End of date range to sample from
             rate_limit_safety: Stop when this many API requests remain
+            seed: Random seed for reproducibility
         """
         super().__init__(token)
+        
+        # Set random seed if provided
+        if seed is not None:
+            random.seed(seed)
+            self.logger.info(f"Random seed set to: {seed}")
         
         # Default to last 90 days if no range specified
         if end_date is None:
