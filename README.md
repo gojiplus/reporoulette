@@ -2,7 +2,6 @@
 
 > Spin the wheel and see which GitHub repositories you get!
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PyPI version](https://img.shields.io/pypi/v/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![License](https://img.shields.io/pypi/l/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![Downloads](https://static.pepy.tech/badge/reporoulette)](https://pepy.tech/project/reporoulette)
