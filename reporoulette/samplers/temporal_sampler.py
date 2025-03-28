@@ -10,9 +10,9 @@ from .base import BaseSampler
 
 class TemporalSampler(BaseSampler):
     """
-    Sample repositories by randomly selecting time points and fetching repos updated in those periods.
+    Sample repositories by randomly selecting days and fetching repos updated in those periods.
     
-    This sampler selects random date/hour combinations within a specified range,
+    This sampler selects random days within a specified date range,
     weights them by repository count, and retrieves repositories with proportional sampling.
     """
     def __init__(
@@ -74,6 +74,10 @@ class TemporalSampler(BaseSampler):
         else:
             self.start_date = start_date
             
+        # Ensure dates have no time component for consistent day-level sampling
+        self.start_date = self.start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        self.end_date = self.end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            
         self.rate_limit_safety = rate_limit_safety
         self.api_base_url = "https://api.github.com"
         
@@ -90,37 +94,38 @@ class TemporalSampler(BaseSampler):
         self.success_count = 0
         self.results = []
         
-    def _random_datetime(self) -> datetime:
+    def _random_date(self) -> datetime:
         """
-        Generate a random datetime within the specified range.
+        Generate a random date within the specified range.
         
         Returns:
-            Random datetime object rounded to the hour
+            Random datetime object with time set to beginning of day
         """
         time_delta = self.end_date - self.start_date
-        random_seconds = random.randint(0, int(time_delta.total_seconds()))
-        random_dt = self.start_date + timedelta(seconds=random_seconds)
+        random_days = random.randint(0, time_delta.days)
+        random_date = self.start_date + timedelta(days=random_days)
         
-        # Round to the hour for consistency
-        return random_dt.replace(minute=0, second=0, microsecond=0)
+        # Set to beginning of day
+        return random_date.replace(hour=0, minute=0, second=0, microsecond=0)
     
     def _format_date_for_query(self, dt: datetime) -> Tuple[str, str]:
         """
-        Format a datetime for GitHub API query.
+        Format a date for GitHub API query.
         
         Args:
-            dt: Datetime to format
+            dt: Date to format
             
         Returns:
-            Tuple of (start, end) strings for the hour period
+            Tuple of (start, end) strings for the day period
         """
-        # Round to the hour
-        dt_hour = dt.replace(minute=0, second=0, microsecond=0)
-        dt_next_hour = dt_hour + timedelta(hours=1)
+        # Set to beginning of day
+        dt_day = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Set to end of day
+        dt_next_day = dt_day + timedelta(days=1)
         
         # Format for GitHub API with Z suffix for UTC
-        start_str = dt_hour.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
-        end_str = dt_next_hour.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
+        start_str = dt_day.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
+        end_str = dt_next_day.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
         
         return start_str, end_str
     
@@ -232,11 +237,9 @@ class TemporalSampler(BaseSampler):
             self.logger.error(f"Error calculating rate limit wait time: {str(e)}")
             return 60  # Default to 60s if can't determine
     
-# Removed _get_repository_counts method as we're now getting counts in the first pass
-    
     def sample(
         self, 
-        hours_to_sample: int = 10,
+        days_to_sample: int = 10,  # Changed from hours_to_sample
         repos_to_collect: int = 100,
         per_page: int = 100,
         min_wait: float = 1.0,
@@ -246,10 +249,10 @@ class TemporalSampler(BaseSampler):
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Sample repositories by randomly selecting time periods with weighting based on repo count.
+        Sample repositories by randomly selecting days with weighting based on repo count.
         
         Args:
-            hours_to_sample: Number of random hours to initially sample for count assessment
+            days_to_sample: Number of random days to initially sample for count assessment
             repos_to_collect: Target number of repositories to collect
             per_page: Number of results per page (max 100)
             min_wait: Minimum wait time between API requests
@@ -262,7 +265,7 @@ class TemporalSampler(BaseSampler):
             List of repository data
         """
         self.logger.info(
-            f"Starting weighted temporal sampling: hours_to_sample={hours_to_sample}, "
+            f"Starting weighted temporal sampling: days_to_sample={days_to_sample}, "
             f"repos_to_collect={repos_to_collect}, per_page={per_page}, "
             f"min_stars={min_stars}, min_size_kb={min_size_kb}, language={language or 'None'}"
         )
@@ -281,31 +284,31 @@ class TemporalSampler(BaseSampler):
         self.success_count = 0
         start_time = time.time()
         
-        # Generate random hours for initial sampling
-        initial_hours = []
-        for _ in range(hours_to_sample):
-            random_dt = self._random_datetime()
-            initial_hours.append(random_dt)
+        # Generate random days for initial sampling
+        initial_days = []
+        for _ in range(days_to_sample):
+            random_dt = self._random_date()
+            initial_days.append(random_dt)
         
         # Sort chronologically for better logging
-        initial_hours.sort()
+        initial_days.sort()
         
-        self.logger.info(f"Generated {len(initial_hours)} random time periods to sample")
+        self.logger.info(f"Generated {len(initial_days)} random days to sample")
         
-        # Step 1: Get the first page of results and total counts for each period in one pass
-        for i, period in enumerate(initial_hours):
+        # Step 1: Get the first page of results and total counts for each day in one pass
+        for i, day in enumerate(initial_days):
             # Check rate limit periodically
             if i % 5 == 0:
                 remaining = self._check_rate_limit()
                 if remaining <= self.rate_limit_safety:
                     self.logger.warning(
                         f"Approaching GitHub API rate limit ({remaining} remaining). "
-                        f"Stopping initial sampling after {i}/{hours_to_sample} time periods."
+                        f"Stopping initial sampling after {i}/{days_to_sample} days."
                     )
                     break
             
-            start_time_str, end_time_str = self._format_date_for_query(period)
-            hour_str = period.strftime("%Y-%m-%d %H:00")
+            start_time_str, end_time_str = self._format_date_for_query(day)
+            day_str = day.strftime("%Y-%m-%d")
             
             # Build query
             query = self._build_search_query(
@@ -315,7 +318,7 @@ class TemporalSampler(BaseSampler):
             # Construct the URL for first page
             url = f"{self.api_base_url}/search/repositories?q={query}&sort=updated&order=desc&per_page={per_page}&page=1"
             
-            self.logger.info(f"Sampling period {i+1}/{hours_to_sample}: {hour_str}")
+            self.logger.info(f"Sampling day {i+1}/{days_to_sample}: {day_str}")
             
             try:
                 self.attempts += 1
@@ -327,13 +330,13 @@ class TemporalSampler(BaseSampler):
                     
                     if count > 0:
                         self.success_count += 1
-                        self.logger.info(f"Found {count} repositories in period {hour_str}")
+                        self.logger.info(f"Found {count} repositories on {day_str}")
                         
                         # Store period data including count and first page results
-                        period_data[period] = {
+                        period_data[day] = {
                             'count': count,
                             'first_page': results['items'],
-                            'hour_str': hour_str
+                            'day_str': day_str
                         }
                         
                         # Process first page repos and add to collection
@@ -358,7 +361,7 @@ class TemporalSampler(BaseSampler):
                                 'language': repo.get('language'),
                                 'visibility': repo.get('visibility', 'public'),
                                 'size': repo.get('size', 0),  # Size in KB
-                                'sampled_from': hour_str  # Add the time period this repo was sampled from
+                                'sampled_from': day_str  # Add the day this repo was sampled from
                             }
                             
                             period_repos.append(repo_data)
@@ -367,7 +370,7 @@ class TemporalSampler(BaseSampler):
                         all_repos.extend(period_repos)
                         self.logger.info(f"Added {len(period_repos)} repositories from first page")
                     else:
-                        self.logger.info(f"No repositories found in period {hour_str}")
+                        self.logger.info(f"No repositories found on {day_str}")
                 
                 elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
                     wait_time = self._calculate_rate_limit_wait_time()
@@ -387,40 +390,40 @@ class TemporalSampler(BaseSampler):
                 time.sleep(wait_time)
                 
             except Exception as e:
-                self.logger.error(f"Error sampling time period {hour_str}: {str(e)}")
+                self.logger.error(f"Error sampling day {day_str}: {str(e)}")
                 time.sleep(min_wait * 2)  # Longer delay on error
         
         # Step 2: Create weighted distribution based on repository counts
-        # Filter out periods with zero repositories
-        valid_periods = {p: data['count'] for p, data in period_data.items() if data['count'] > 0}
+        # Filter out days with zero repositories
+        valid_days = {p: data['count'] for p, data in period_data.items() if data['count'] > 0}
         
-        if not valid_periods:
-            self.logger.warning("No repositories found in any sampled time periods. Returning empty list.")
+        if not valid_days:
+            self.logger.warning("No repositories found in any sampled days. Returning empty list.")
             return []
         
         # Get enough repositories to meet our target
         if len(all_repos) < repos_to_collect:
             # Step 3: Create probability distribution for weighted sampling
-            periods = list(valid_periods.keys())
-            weights = [valid_periods[period] for period in periods]
+            days = list(valid_days.keys())
+            weights = [valid_days[day] for day in days]
             total_weight = sum(weights)
             
             # Normalize weights to get probabilities
             probs = [weight / total_weight for weight in weights]
             
             self.logger.info(
-                f"Created weighted distribution across {len(periods)} time periods "
+                f"Created weighted distribution across {len(days)} days "
                 f"(total weight: {total_weight})"
             )
             
-            # Log the top periods with highest weights
-            top_periods = sorted(valid_periods.items(), key=lambda x: x[1], reverse=True)[:5]
-            self.logger.info("Top 5 time periods by repository count:")
-            for period, count in top_periods:
-                hour_str = period_data[period]['hour_str']
-                self.logger.info(f"  {hour_str}: {count} repositories")
+            # Log the top days with highest weights
+            top_days = sorted(valid_days.items(), key=lambda x: x[1], reverse=True)[:5]
+            self.logger.info("Top 5 days by repository count:")
+            for day, count in top_days:
+                day_str = period_data[day]['day_str']
+                self.logger.info(f"  {day_str}: {count} repositories")
             
-            # Step 4: Sample additional repositories from periods based on weighted distribution
+            # Step 4: Sample additional repositories from days based on weighted distribution
             while len(all_repos) < repos_to_collect:
                 # Check if we're approaching rate limit
                 if self.attempts % 5 == 0:
@@ -432,23 +435,23 @@ class TemporalSampler(BaseSampler):
                         )
                         break
                 
-                # Select a time period using weighted random choice
-                period = random.choices(periods, weights=probs, k=1)[0]
-                period_info = period_data[period]
-                hour_str = period_info['hour_str']
-                count = period_info['count']
+                # Select a day using weighted random choice
+                day = random.choices(days, weights=probs, k=1)[0]
+                day_info = period_data[day]
+                day_str = day_info['day_str']
+                count = day_info['count']
                 
-                # Skip if we've already collected enough from this period
-                # (To avoid repeatedly sampling the same popular period)
-                if sum(1 for repo in all_repos if repo.get('sampled_from') == hour_str) >= count / 2:
+                # Skip if we've already collected enough from this day
+                # (To avoid repeatedly sampling the same popular day)
+                if sum(1 for repo in all_repos if repo.get('sampled_from') == day_str) >= count / 2:
                     continue
                 
-                start_time_str, end_time_str = self._format_date_for_query(period)
+                start_time_str, end_time_str = self._format_date_for_query(day)
                 self.attempts += 1
                 
-                # Log the period we're querying
+                # Log the day we're querying
                 self.logger.info(
-                    f"Sampling weighted period: {hour_str} (weight: {count}) "
+                    f"Sampling weighted day: {day_str} (weight: {count}) "
                     f"- collected {len(all_repos)}/{repos_to_collect} repositories so far"
                 )
                 
@@ -457,7 +460,7 @@ class TemporalSampler(BaseSampler):
                     start_time_str, end_time_str, min_stars, min_size_kb, language, **kwargs
                 )
                 
-                # For periods with many repos, select a random page within the first N pages
+                # For days with many repos, select a random page within the first N pages
                 # Skip page 1 since we already have it
                 max_page = min(10, (count // per_page) + 1)
                 page = 1 if max_page <= 1 else random.randint(2, max_page)
@@ -504,7 +507,7 @@ class TemporalSampler(BaseSampler):
                                     'language': repo.get('language'),
                                     'visibility': repo.get('visibility', 'public'),
                                     'size': repo.get('size', 0),  # Size in KB
-                                    'sampled_from': hour_str  # Add the time period this repo was sampled from
+                                    'sampled_from': day_str  # Add the day this repo was sampled from
                                 }
                                 
                                 period_repos.append(repo_data)
@@ -512,14 +515,14 @@ class TemporalSampler(BaseSampler):
                             # Add new repos from this period
                             all_repos.extend(period_repos)
                             added_count = len(period_repos)
-                            self.logger.info(f"Added {added_count} new repositories from this period")
+                            self.logger.info(f"Added {added_count} new repositories from this day")
                             
                             # If we've added enough repos, we can stop
                             if len(all_repos) >= repos_to_collect:
                                 self.logger.info(f"Reached target of {repos_to_collect} repositories. Stopping sampling.")
                                 break
                         else:
-                            self.logger.info(f"No repositories found in period {hour_str}")
+                            self.logger.info(f"No repositories found on {day_str}")
                     
                     elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
                         # Handle rate limiting - wait until reset
@@ -541,7 +544,7 @@ class TemporalSampler(BaseSampler):
                     time.sleep(wait_time)
                     
                 except Exception as e:
-                    self.logger.error(f"Error sampling time period {hour_str}: {str(e)}")
+                    self.logger.error(f"Error sampling day {day_str}: {str(e)}")
                     time.sleep(min_wait * 2)  # Longer delay on error
         
         # Report summary
