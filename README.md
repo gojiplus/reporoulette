@@ -75,31 +75,64 @@ filtered_repos = sampler.sample(
 
 ### 3. 🔍 BigQuery Sampling
 
-Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. We provide three methods --- standard sampler, sampling based on the commits table, and sampling based on the hour buckets. The virtue of the first is its simplicity. 
+The `BigQuerySampler` leverages Google BigQuery's public GitHub dataset to sample repositories with advanced filtering capabilities.
+
+#### Setup for BigQuery Sampler
+
+1. **Create a Google Cloud Platform (GCP) project**:
+   - Go to the [GCP Console](https://console.cloud.google.com/)
+   - Create a new project
+
+2. **Enable the BigQuery API**:
+   - In your project, go to "APIs & Services" > "Library"
+   - Search for "BigQuery API" and enable it
+
+3. **Create a service account**:
+   - Go to "IAM & Admin" > "Service Accounts"
+   - Create a new service account
+   - Grant it the "BigQuery User" role
+   - Create and download a JSON key file
+
+4. **Install required dependencies**:
+   ```bash
+   pip install google-cloud-bigquery google-auth
+
+5. **Using BigQuerySampler**:
 
 ```python
 from reporoulette import BigQuerySampler
 
-# Initialize the sampler (requires GCP credentials)
+# Initialize with service account credentials
 sampler = BigQuerySampler(
-    credentials_path="path/to/credentials.json"
+    credentials_path="path/to/your-service-account-key.json",
+    project_id="your-gcp-project-id",
+    seed=42
 )
 
-# Sample 1,000 repositories created in the last year
-repos = sampler.sample(
-    n_samples=1000,
-    created_after="2023-01-01",
-    sample_by="created_at"
+# Sample active repositories with commits in the last year
+active_repos = sampler.sample(
+    n_samples=50,
+    population="active",
+    languages=["Python", "JavaScript"]  # Optional language filter
 )
 
-# Sample repositories with multiple criteria
-specialty_repos = sampler.sample(
-    n_samples=500,
-    min_stars=100,
-    min_forks=50,
-    languages=["rust", "go"],
-    has_license=True
+# Sample repositories across random days
+random_repos = sampler.sample_by_day(
+    n_samples=50,
+    days_to_sample=10,
+    years_back=5
 )
+
+# Get language information for sampled repositories
+languages = sampler.get_languages(random_repos)
+
+# Print results
+for repo in random_repos:
+    print(f"Repository: {repo['full_name']}")
+    repo_languages = languages.get(repo['full_name'], [])
+    if repo_languages:
+        print(f"Primary language: {repo_languages[0]['language']}")
+    print("---")
 ```
 
 **Advantages:**
@@ -115,33 +148,31 @@ specialty_repos = sampler.sample(
 
 ### 4. GH Archive Sampler
 
-```python
-rom reporoulette.samplers import GHArchiveSampler
+The `GHArchiveSampler` fetches repositories by sampling events from [GitHub Archive](https://www.gharchive.org/), a project that records the public GitHub timeline.
 
-sampler = GHArchiveSampler(seed=42)
-    
-    # Sample repositories using the gh_sampler method directly
-    # (This is the method implemented by GHArchiveSampler, not the abstract sample method)
-repos = sampler.gh_sampler(
-        n_samples=10,              # Number of repositories to sample
-        hours_to_sample=5,         # Sample from 5 random hours
-        repos_per_hour=3,          # Collect up to 3 repos per hour
-        years_back=3,              # Sample from last 3 years
-        event_types=["PushEvent", "CreateEvent", "PullRequestEvent"]  # Types of events to consider
-    )
-    
-    
-    # Display the sampled repositories
-print(f"Successfully sampled {len(repos)} repositories:\n")
-    
-for i, repo in enumerate(repos, 1):
-    print(f"{i}. {repo['full_name']}")
-    print(f"   URL: {repo['html_url']}")
-    print(f"   Language: {repo.get('language', 'Unknown')}")
-    print(f"   Event: {repo.get('event_type')}")
-    print(f"   Sampled from: {repo.get('sampled_from')}")
-    print()
+```python
+from reporoulette import GHArchiveSampler
+
+# Initialize with optional parameters
+sampler = GHArchiveSampler(seed=42)  # Set seed for reproducibility
+
+# Sample repositories
+repos = sampler.sample(
+    n_samples=100,           # Number of repositories to sample
+    days_to_sample=5,        # Number of random days to sample from
+    repos_per_day=20,        # Repositories to sample per day
+    years_back=2,            # How many years to look back
+    event_types=["PushEvent", "CreateEvent", "PullRequestEvent"]  # Event types to consider
+)
+
+# Access results
+for repo in repos:
+    print(f"Repository: {repo['full_name']}")
+    print(f"Event Type: {repo['event_type']}")
+    print(f"Sampled From: {repo['sampled_from']}")
+    print("---")
 ```
+
 
 ## 📊 Example Use Cases
 
