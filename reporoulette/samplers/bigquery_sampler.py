@@ -12,7 +12,6 @@ except ImportError:
     BIGQUERY_AVAILABLE = False
 
 from .base import BaseSampler
-from .bq_utils import execute_query, filter_repos, format_timestamp_query
 
 class BigQuerySampler(BaseSampler):
     """
@@ -95,82 +94,64 @@ class BigQuerySampler(BaseSampler):
             self.success_count += 1
         return results
 
-    def _adjust_hours_to_sample(self, n_samples: int, repos_per_hour: int, hours_to_sample: int) -> int:
+    def _build_count_query(self, days_to_sample: int, years_back: int) -> str:
         """
-        Adjust the number of hours to sample based on target samples and max repos per hour.
-        """
-        hours_needed = max(1, (n_samples + repos_per_hour - 1) // repos_per_hour)
-        return max(hours_to_sample, hours_needed)
-
-    def _build_count_query(self, hours_to_sample: int, years_back: int) -> str:
-        """
-        Build the SQL query that creates a temporary table of random (day, hour)
-        pairs and counts unique repositories for each (day, hour) from daily GitHub Archive tables.
+        Build the SQL query that creates a temporary table of random days
+        and counts unique repositories for each day from GitHub Archive tables.
         """
         return f"""
         -- Define parameters
-        DECLARE hours_to_sample INT64 DEFAULT {hours_to_sample};
+        DECLARE days_to_sample INT64 DEFAULT {days_to_sample};
         DECLARE years_back INT64 DEFAULT {years_back};
 
-        -- Create a table of random dates and hours to sample from
+        -- Create a table of random dates to sample from
         CREATE TEMP TABLE random_dates AS (
           SELECT 
-            FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL CAST(FLOOR(RAND({self._seed}) * (365 * years_back)) AS INT64) DAY)) AS day,
-            CAST(FLOOR(RAND({self._seed}) * 24) AS INT64) AS hour
-          FROM UNNEST(GENERATE_ARRAY(1, hours_to_sample))
+            FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL CAST(FLOOR(RAND() * (365 * years_back)) AS INT64) DAY)) AS day
+          FROM UNNEST(GENERATE_ARRAY(1, days_to_sample))
         );
 
-        -- Count unique repositories per (day, hour)
+        -- Count unique repositories per day
         SELECT
           rd.day AS sample_day,
-          rd.hour AS sample_hour,
-          CONCAT(rd.day, '-', FORMAT('%02d', rd.hour)) AS hour_key,
           COUNT(DISTINCT event.repo_name) AS repo_count
         FROM random_dates rd
-        CROSS JOIN (
-          SELECT DISTINCT day
-          FROM random_dates
-        ) dt
         CROSS JOIN (
           SELECT repo.name AS repo_name, created_at
           FROM (
             EXECUTE IMMEDIATE FORMAT(
               "SELECT repo.name, created_at
                FROM `githubarchive.day.%s`
-               WHERE EXTRACT(HOUR FROM created_at) = %d
-               AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d YEAR)
+               WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d YEAR)
                LIMIT 100000",
-              dt.day,
-              rd.hour,
+              rd.day,
               years_back
             )
           )
         ) event
-        WHERE rd.day = dt.day
-        GROUP BY rd.day, rd.hour
+        GROUP BY rd.day
         ORDER BY repo_count DESC
         """
 
-    def _build_bucket_query(self, hour: Dict[str, Any], i: int, years_back: int) -> str:
+    def _build_day_query(self, day_data: Dict[str, Any], i: int, years_back: int) -> str:
         """
-        Build an individual SQL query to sample repositories from a specific (day, hour) bucket.
+        Build an individual SQL query to sample repositories from a specific day.
         """
-        day = hour.get('sample_day')
-        hour_num = hour.get('sample_hour')
-        hour_key = hour.get('hour_key')
-        repo_count = hour.get('repo_count', 0)
-        samples_to_take = hour.get('samples_to_take', 1)
+        day = day_data.get('sample_day')
+        repo_count = day_data.get('repo_count', 0)
+        samples_to_take = day_data.get('samples_to_take', 1)
+        
         return f"""
-        -- Hour bucket {i+1}: {hour_key} with {repo_count} repositories
+        -- Day {i+1}: {day} with {repo_count} repositories
         SELECT DISTINCT
             event.repo_name AS full_name,
             SPLIT(event.repo_name, '/')[SAFE_OFFSET(1)] AS name,
             SPLIT(event.repo_name, '/')[SAFE_OFFSET(0)] AS owner,
             event.repo_url AS html_url,
             event.created_at,
-            '{hour_key}' AS sampled_from,
+            '{day}' AS sampled_from,
             event.event_type,
-            {repo_count} AS hour_repo_count,
+            {repo_count} AS day_repo_count,
             {samples_to_take} AS samples_allocated
         FROM (
             EXECUTE IMMEDIATE FORMAT(
@@ -180,11 +161,9 @@ class BigQuerySampler(BaseSampler):
                     created_at,
                     type AS event_type
                  FROM `githubarchive.day.%s`
-                 WHERE EXTRACT(HOUR FROM created_at) = %d
-                 AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d YEAR)
+                 WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d YEAR)
                  LIMIT 100000",
                 '{day}',
-                {hour_num},
                 {years_back}
             )
         ) AS event
@@ -192,11 +171,11 @@ class BigQuerySampler(BaseSampler):
         LIMIT {samples_to_take}
         """
 
-    def _combine_bucket_queries(self, bucket_queries: List[str], n_samples: int) -> str:
+    def _combine_day_queries(self, day_queries: List[str], n_samples: int) -> str:
         """
-        Combine individual bucket queries into one final query and deduplicate the results.
+        Combine individual day queries into one final query and deduplicate the results.
         """
-        combined_query = "\nUNION ALL\n".join(bucket_queries)
+        combined_query = "\nUNION ALL\n".join(day_queries)
         return f"""
         -- Final combined query with deduplication
         SELECT DISTINCT
@@ -207,7 +186,7 @@ class BigQuerySampler(BaseSampler):
             created_at,
             sampled_from,
             event_type,
-            hour_repo_count,
+            day_repo_count,
             samples_allocated
         FROM (
             {combined_query}
@@ -216,117 +195,53 @@ class BigQuerySampler(BaseSampler):
         LIMIT {n_samples}
         """
 
-    def sample_by_datetime_weighted(
+    def sample_by_day(
         self,
         n_samples: int = 100,
-        time_buckets_to_sample: int = 30,
-        repos_per_bucket: int = 10,
+        days_to_sample: int = 10,
+        repos_per_day: int = 50,
         years_back: int = 10,
-        time_bucket_interval: str = "DAY",  # Options: "HOUR", "DAY", "WEEK", "MONTH"
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Sample repositories with proper weighting based on unique repository counts in time buckets.
+        Sample repositories using a day-based approach with GitHub Archive tables.
         """
         self.logger.info(
-            f"Starting time-weighted sampling: n_samples={n_samples}, "
-            f"time_buckets_to_sample={time_buckets_to_sample}, "
-            f"time_bucket_interval={time_bucket_interval}"
+            f"Sampling {n_samples} repositories across {days_to_sample} days"
         )
-
-        # Validate time bucket interval
-        valid_intervals = ["HOUR", "DAY", "WEEK", "MONTH"]
-        if time_bucket_interval not in valid_intervals:
-            raise ValueError(f"time_bucket_interval must be one of {valid_intervals}")
-
         if kwargs:
             self.logger.info(f"Filter criteria: {kwargs}")
 
-        self.logger.info("Querying for repository counts per time bucket...")
-        time_bucket_query = f"""
-        -- Get repository counts by time bucket
-        WITH time_buckets AS (
-          SELECT
-            TIMESTAMP_TRUNC(TIMESTAMP_SECONDS(c.committer.time_sec), {time_bucket_interval}) AS time_bucket,
-            COUNT(DISTINCT repo) AS repo_count
-          FROM
-            `bigquery-public-data.github_repos.commits` c,
-            UNNEST(c.repo_name) AS repo
-          WHERE
-            c.committer.time_sec >= UNIX_SECONDS(TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {years_back} YEAR))
-          GROUP BY
-            time_bucket
-          ORDER BY
-            time_bucket DESC
-        )
-        SELECT
-          FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', time_bucket) AS time_bucket_str,
-          time_bucket,
-          repo_count,
-          PERCENT_RANK() OVER (ORDER BY repo_count) AS percentile
-        FROM
-          time_buckets
-        ORDER BY repo_count DESC
-        LIMIT {time_buckets_to_sample}
-        """
-        time_buckets = self._execute_query(time_bucket_query)
-        if not time_buckets:
-            self.logger.warning("No time buckets found. Check your query parameters.")
+        # Adjust days to sample if needed
+        days_needed = max(1, (n_samples + repos_per_day - 1) // repos_per_day)
+        days_to_sample = max(days_to_sample, days_needed)
+        self.logger.debug(f"Adjusted days_to_sample: {days_to_sample}")
+
+        count_query = self._build_count_query(days_to_sample, years_back)
+        day_counts = self._execute_query(count_query)
+        if not day_counts:
+            self.logger.warning("No repositories found for the selected days")
             return []
 
-        total_repos = sum(bucket.get('repo_count', 0) for bucket in time_buckets)
-        avg_repos = total_repos / len(time_buckets) if time_buckets else 0
-        self.logger.info(
-            f"Found {len(time_buckets)} time buckets with {total_repos} total repositories "
-            f"(avg {avg_repos:.1f} repos per bucket)"
-        )
-
-        # Allocate samples for each bucket
-        for bucket in time_buckets:
-            bucket_repo_count = bucket.get('repo_count', 0)
-            bucket_weight = bucket_repo_count / total_repos if total_repos > 0 else 0
-            bucket['samples_to_take'] = min(
-                max(1, int(n_samples * bucket_weight)),
-                min(repos_per_bucket, bucket_repo_count)
+        total_repos = sum(day.get('repo_count', 0) for day in day_counts)
+        for day in day_counts:
+            day_repo_count = day.get('repo_count', 0)
+            day_weight = day_repo_count / total_repos if total_repos > 0 else 0
+            day['samples_to_take'] = min(
+                max(1, int(n_samples * day_weight)),
+                min(repos_per_day, day_repo_count)
             )
 
-        self.logger.info("Sampling repositories from selected time buckets...")
-        bucket_queries = []
-        for i, bucket in enumerate(time_buckets):
-            time_bucket_str = bucket.get('time_bucket_str')
-            repo_count = bucket.get('repo_count', 0)
-            samples_to_take = bucket.get('samples_to_take', 1)
-            if samples_to_take <= 0:
-                continue
-            bucket_query = f"""
-            -- Time bucket {i+1}: {time_bucket_str} with {repo_count} repositories
-            SELECT DISTINCT
-                repo AS full_name,
-                SPLIT(repo, '/')[OFFSET(1)] AS name,
-                SPLIT(repo, '/')[OFFSET(0)] AS owner,
-                '{time_bucket_str}' AS sampled_time_bucket,
-                {repo_count} AS time_bucket_repo_count
-            FROM 
-                `bigquery-public-data.github_repos.commits` c,
-                UNNEST(c.repo_name) AS repo
-            WHERE 
-                TIMESTAMP_TRUNC(TIMESTAMP_SECONDS(c.committer.time_sec), {time_bucket_interval}) = TIMESTAMP('{time_bucket_str}')
-            ORDER BY
-                RAND({self._seed} + {i})
-            LIMIT {samples_to_take}
-            """
-            bucket_queries.append(bucket_query)
+        self.logger.info(f"Found {len(day_counts)} days with {total_repos} total repositories")
 
-        combined_query = "\nUNION ALL\n".join(bucket_queries)
-        final_query = f"""
-        -- Combined query across all time buckets
-        SELECT *
-        FROM (
-            {combined_query}
-        )
-        ORDER BY RAND({self._seed})
-        LIMIT {n_samples}
-        """
+        day_queries = []
+        for i, day in enumerate(day_counts):
+            if day.get('samples_to_take', 0) <= 0:
+                continue
+            day_query = self._build_day_query(day, i, years_back)
+            day_queries.append(day_query)
+
+        final_query = self._combine_day_queries(day_queries, n_samples)
         valid_repos = self._execute_query(final_query)
         self.results = valid_repos
 
@@ -336,106 +251,29 @@ class BigQuerySampler(BaseSampler):
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
-                    f"Applied filters: {filtered_count_before - filtered_count_after} repositories filtered out, "
-                    f"{filtered_count_after} repositories remaining"
+                    f"Applied filters: {filtered_count_after}/{filtered_count_before} repositories retained"
                 )
 
-        self.logger.info(
-            f"Time-weighted sampling completed: found {len(valid_repos)} repositories "
-            f"(success rate: {(self.success_count / self.attempts) * 100:.1f}%)"
-        )
+        self.logger.info(f"Completed day-based sampling: found {len(self.results)} repositories")
 
         if valid_repos:
-            bucket_counts = {}
+            day_counts_map = {}
             for repo in valid_repos:
-                bucket = repo.get('sampled_time_bucket', 'unknown')
-                bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
-            self.logger.info(f"Time bucket distribution in results: {bucket_counts}")
-
-        return self.results
-
-    def sample_by_datetime(
-        self,
-        n_samples: int = 100,
-        hours_to_sample: int = 10,
-        repos_per_hour: int = 50,
-        years_back: int = 10,
-        **kwargs
-    ) -> List[Dict[str, Any]]:
-        """
-        Sample repositories using a datetime-based approach with daily GitHub Archive tables.
-        """
-        self.logger.info(
-            f"Starting datetime sampling: n_samples={n_samples}, hours_to_sample={hours_to_sample}, "
-            f"repos_per_hour={repos_per_hour}, years_back={years_back}"
-        )
-        if kwargs:
-            self.logger.info(f"Filter criteria: {kwargs}")
-
-        hours_to_sample = self._adjust_hours_to_sample(n_samples, repos_per_hour, hours_to_sample)
-        self.logger.debug(f"Adjusted hours_to_sample: {hours_to_sample}")
-
-        count_query = self._build_count_query(hours_to_sample, years_back)
-        hour_counts = self._execute_query(count_query)
-        if not hour_counts:
-            self.logger.warning("No repository counts found for the selected hours")
-            return []
-
-        total_repos = sum(hour.get('repo_count', 0) for hour in hour_counts)
-        for hour in hour_counts:
-            hour_repo_count = hour.get('repo_count', 0)
-            hour_weight = hour_repo_count / total_repos if total_repos > 0 else 0
-            hour['samples_to_take'] = min(
-                max(1, int(n_samples * hour_weight)),
-                min(repos_per_hour, hour_repo_count)
-            )
-
-        self.logger.info(f"Found {len(hour_counts)} hours with {total_repos} total repositories")
-
-        bucket_queries = []
-        for i, hour in enumerate(hour_counts):
-            if hour.get('samples_to_take', 0) <= 0:
-                continue
-            bucket_query = self._build_bucket_query(hour, i, years_back)
-            bucket_queries.append(bucket_query)
-
-        final_query = self._combine_bucket_queries(bucket_queries, n_samples)
-        valid_repos = self._execute_query(final_query)
-        self.results = valid_repos
-
-        filtered_count_before = len(valid_repos)
-        if kwargs:
-            self.results = filter_repos(valid_repos, **kwargs)
-            filtered_count_after = len(self.results)
-            if filtered_count_before != filtered_count_after:
-                self.logger.info(
-                    f"Applied filters: {filtered_count_before - filtered_count_after} repositories filtered out, "
-                    f"{filtered_count_after} repositories remaining"
-                )
-
-        self.logger.info(
-            f"Datetime sampling completed: found {len(valid_repos)} repositories "
-            f"(success rate: {(self.success_count / self.attempts) * 100:.1f}%)"
-        )
-
-        if valid_repos:
-            hour_counts_map = {}
-            for repo in valid_repos:
-                hour_sampled = repo.get('sampled_from', 'unknown')
-                hour_repo_count = repo.get('hour_repo_count', 0)
+                day_sampled = repo.get('sampled_from', 'unknown')
+                day_repo_count = repo.get('day_repo_count', 0)
                 allocated = repo.get('samples_allocated', 0)
-                if hour_sampled not in hour_counts_map:
-                    hour_counts_map[hour_sampled] = {'count': 0, 'repos': hour_repo_count, 'allocated': allocated}
-                hour_counts_map[hour_sampled]['count'] += 1
-            self.logger.info(f"Sampled from {len(hour_counts_map)} different hours")
-            for hour_str, data in sorted(hour_counts_map.items()):
+                if day_sampled not in day_counts_map:
+                    day_counts_map[day_sampled] = {'count': 0, 'repos': day_repo_count, 'allocated': allocated}
+                day_counts_map[day_sampled]['count'] += 1
+            self.logger.info(f"Sampled from {len(day_counts_map)} different days")
+            for day_str, data in sorted(day_counts_map.items()):
                 self.logger.debug(
-                    f"Hour {hour_str}: {data['count']}/{data['allocated']} samples from {data['repos']} repos"
+                    f"Day {day_str}: {data['count']}/{data['allocated']} samples from {data['repos']} repos"
                 )
 
         return self.results
 
-    def sample_standard(
+    def sample_active(
         self,
         n_samples: int = 100,
         created_after: Optional[Union[str, datetime]] = None,
@@ -444,9 +282,9 @@ class BigQuerySampler(BaseSampler):
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Sample repositories using the standard BigQuery approach.
+        Sample repositories with recent commit activity.
         """
-        self.logger.info(f"Starting standard sampling: n_samples={n_samples}")
+        self.logger.info(f"Sampling {n_samples} active repositories based on commit history")
         if kwargs:
             self.logger.info(f"Filter criteria: {kwargs}")
 
@@ -461,12 +299,12 @@ class BigQuerySampler(BaseSampler):
         else:
             created_before = "CURRENT_TIMESTAMP()"
 
-        self.logger.info(f"Date range: {created_after} to {created_before}")
+        self.logger.info(f"Time period: {created_after} to {created_before}")
 
         lang_list = None
         if languages:
             lang_list = ", ".join([f"'{lang}'" for lang in languages])
-            self.logger.info(f"Filtering for owners: {lang_list}")
+            self.logger.info(f"Filtering for languages: {lang_list}")
 
         query = f"""
         WITH repo_set AS (
@@ -479,7 +317,7 @@ class BigQuerySampler(BaseSampler):
                 UNNEST(c.repo_name) AS repo
             WHERE 
                 TIMESTAMP_SECONDS(c.committer.time_sec) BETWEEN TIMESTAMP({created_after}) AND TIMESTAMP({created_before})
-                {('AND SPLIT(repo, \'/\')[OFFSET(0)] IN (' + lang_list + ')') if languages else ''}
+                {("AND SPLIT(repo, '/')[OFFSET(0)] IN (" + lang_list + ")") if languages else ''}
         )
         SELECT
             full_name,
@@ -499,43 +337,45 @@ class BigQuerySampler(BaseSampler):
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
-                    f"Applied filters: {filtered_count_before - filtered_count_after} repositories filtered out, "
-                    f"{filtered_count_after} repositories remaining"
+                    f"Applied filters: {filtered_count_after}/{filtered_count_before} repositories retained"
                 )
 
-        self.logger.info(f"Standard sampling completed: found {len(valid_repos)} repositories")
+        self.logger.info(f"Completed active repository sampling: found {len(self.results)} repositories")
         return self.results
 
     def sample(
         self, 
         n_samples: int = 100,
-        sampling_method: str = "time_weighted",
+        population: str = "all",
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
         Sample repositories using BigQuery.
+        
+        Args:
+            n_samples: Number of repositories to sample
+            population: Type of repository population to sample from ('all' or 'active')
+            **kwargs: Additional filtering criteria
+            
+        Returns:
+            List of repository dictionaries
         """
-        self.logger.info(f"Starting repository sampling with n_samples={n_samples}, method={sampling_method}")
+        self.logger.info(f"Starting repository sampling: n_samples={n_samples}, population={population}")
         start_time = time.time()
 
         self.attempts = 0
         self.success_count = 0
 
-        if sampling_method == "time_weighted":
-            self.logger.info("Using time-weighted sampling method")
-            results = self.sample_by_datetime_weighted(n_samples=n_samples, **kwargs)
-        elif sampling_method == "datetime":
-            self.logger.info("Using datetime sampling method")
-            results = self.sample_by_datetime(n_samples=n_samples, **kwargs)
-        else:  # standard
-            self.logger.info("Using standard sampling method")
-            results = self.sample_standard(n_samples=n_samples, **kwargs)
+        if population == "active":
+            self.logger.info("Targeting active repositories with recent commits")
+            results = self.sample_active(n_samples=n_samples, **kwargs)
+        else:  # all
+            self.logger.info("Sampling from all repositories across time periods")
+            results = self.sample_by_day(n_samples=n_samples, **kwargs)
 
         elapsed_time = time.time() - start_time
         self.logger.info(
-            f"Sampling completed in {elapsed_time:.2f} seconds: "
-            f"found {len(results)} repositories, "
-            f"{self.attempts} attempts, {self.success_count} successful queries"
+            f"Sampling completed in {elapsed_time:.2f}s: {len(results)} repositories found"
         )
 
         return results
@@ -546,68 +386,69 @@ class BigQuerySampler(BaseSampler):
         """
         self.logger.info(f"Fetching language information for {len(repos)} repositories")
         start_time = time.time()
-
+        
         repo_names = [repo['full_name'] for repo in repos if 'full_name' in repo]
         if not repo_names:
             self.logger.warning("No valid repository names found")
             return {}
-
-        chunk_size = 100
-        repo_chunks = [repo_names[i:i + chunk_size] for i in range(0, len(repo_names), chunk_size)]
-        self.logger.info(f"Processing {len(repo_chunks)} chunks (max {chunk_size} per chunk)")
-
+        
+        # Process all repositories in a single query
+        repo_list = ", ".join([f"'{repo}'" for repo in repo_names])
+        
+        query = f"""
+        SELECT
+            repo_name,
+            ARRAY_AGG(
+                STRUCT(
+                    lang.name AS language, 
+                    lang.bytes AS bytes
+                ) 
+                ORDER BY lang.bytes DESC
+            ) AS languages
+        FROM
+            `bigquery-public-data.github_repos.languages`,
+            UNNEST(language) AS lang
+        WHERE
+            repo_name IN ({repo_list})
+        GROUP BY
+            repo_name
+        """
+        
+        query_start_time = time.time()
+        results = self._execute_query(query)
+        query_elapsed = time.time() - query_start_time
+        self.logger.info(f"Query completed in {query_elapsed:.2f}s: found language data for {len(results)} repositories")
+        
+        # Process results
         language_info = {}
-        for i, chunk in enumerate(repo_chunks):
-            self.logger.info(f"Processing chunk {i+1}/{len(repo_chunks)} with {len(chunk)} repositories")
-            repo_list = ", ".join([f"'{repo}'" for repo in chunk])
-            query = f"""
-            SELECT
-                repo_name,
-                lang.name AS language,
-                lang.bytes AS bytes
-            FROM
-                `bigquery-public-data.github_repos.languages`,
-                UNNEST(language) AS lang
-            WHERE
-                repo_name IN ({repo_list})
-            ORDER BY
-                repo_name, bytes DESC
-            """
-            chunk_start_time = time.time()
-            results = self._execute_query(query)
-            chunk_elapsed = time.time() - chunk_start_time
-            self.logger.info(f"Chunk {i+1} query completed in {chunk_elapsed:.2f} seconds with {len(results)} language records")
-
-            for result in results:
-                repo_name = result.get('repo_name')
-                if repo_name:
-                    if repo_name not in language_info:
-                        language_info[repo_name] = []
-                    language_info[repo_name].append({
-                        'language': result.get('language'),
-                        'bytes': result.get('bytes')
-                    })
-
+        for result in results:
+            repo_name = result.get('repo_name')
+            if repo_name and 'languages' in result:
+                language_info[repo_name] = result['languages']
+        
+        # Calculate stats
         repos_with_language = len(language_info)
         total_languages = sum(len(langs) for langs in language_info.values())
         elapsed_time = time.time() - start_time
+        
         self.logger.info(
-            f"Language query completed in {elapsed_time:.2f} seconds: "
-            f"found information for {repos_with_language}/{len(repos)} repositories "
-            f"({total_languages} language entries total)"
+            f"Language query completed in {elapsed_time:.2f}s: found data for {repos_with_language}/{len(repos)} repos"
         )
-
+        
+        # Generate language statistics if data was found
         if language_info:
             all_languages = []
             for repo_langs in language_info.values():
-                for lang in repo_langs:
-                    if 'language' in lang:
-                        all_languages.append(lang['language'])
+                for lang_entry in repo_langs:
+                    if 'language' in lang_entry:
+                        all_languages.append(lang_entry['language'])
+            
             language_counts = {}
             for lang in all_languages:
                 language_counts[lang] = language_counts.get(lang, 0) + 1
+            
             top_languages = sorted(language_counts.items(), key=lambda x: x[1], reverse=True)[:10]
             top_langs_str = ", ".join([f"{lang}: {count}" for lang, count in top_languages])
             self.logger.info(f"Top languages: {top_langs_str}")
-
+        
         return language_info

@@ -464,85 +464,85 @@ class TemporalSampler(BaseSampler):
                 
                 # Construct the URL for additional page
                 url = f"{self.api_base_url}/search/repositories?q={query}&sort=updated&order=desc&per_page={per_page}&page={page}"
-            
-            try:
-                query_start_time = time.time()
-                response = requests.get(url, headers=headers)
-                query_elapsed = time.time() - query_start_time
                 
-                if response.status_code == 200:
-                    results = response.json()
+                try:
+                    query_start_time = time.time()
+                    response = requests.get(url, headers=headers)
+                    query_elapsed = time.time() - query_start_time
                     
-                    if results['total_count'] > 0:
-                        repos = results['items']
-                        self.success_count += 1
+                    if response.status_code == 200:
+                        results = response.json()
                         
-                        self.logger.info(
-                            f"Found {results['total_count']} repositories "
-                            f"(fetched {len(repos)} from page {page} in {query_elapsed:.2f} seconds)"
+                        if results['total_count'] > 0:
+                            repos = results['items']
+                            self.success_count += 1
+                            
+                            self.logger.info(
+                                f"Found {results['total_count']} repositories "
+                                f"(fetched {len(repos)} from page {page} in {query_elapsed:.2f} seconds)"
+                            )
+                            
+                            # Process repos to match our standard format
+                            period_repos = []
+                            for repo in repos:
+                                # Skip repos we already have
+                                if any(r['full_name'] == repo['full_name'] for r in all_repos):
+                                    continue
+                                    
+                                repo_data = {
+                                    'id': repo['id'],
+                                    'name': repo['name'],
+                                    'full_name': repo['full_name'],
+                                    'owner': repo['owner']['login'],
+                                    'html_url': repo['html_url'],
+                                    'description': repo.get('description'),
+                                    'created_at': repo['created_at'],
+                                    'updated_at': repo['updated_at'],
+                                    'pushed_at': repo.get('pushed_at'),
+                                    'stargazers_count': repo.get('stargazers_count', 0),
+                                    'forks_count': repo.get('forks_count', 0),
+                                    'language': repo.get('language'),
+                                    'visibility': repo.get('visibility', 'public'),
+                                    'size': repo.get('size', 0),  # Size in KB
+                                    'sampled_from': hour_str  # Add the time period this repo was sampled from
+                                }
+                                
+                                period_repos.append(repo_data)
+                                
+                            # Add new repos from this period
+                            all_repos.extend(period_repos)
+                            added_count = len(period_repos)
+                            self.logger.info(f"Added {added_count} new repositories from this period")
+                            
+                            # If we've added enough repos, we can stop
+                            if len(all_repos) >= repos_to_collect:
+                                self.logger.info(f"Reached target of {repos_to_collect} repositories. Stopping sampling.")
+                                break
+                        else:
+                            self.logger.info(f"No repositories found in period {hour_str}")
+                    
+                    elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
+                        # Handle rate limiting - wait until reset
+                        wait_time = self._calculate_rate_limit_wait_time()
+                        self.logger.warning(f"Rate limit exceeded. Waiting {wait_time:.1f} seconds...")
+                        time.sleep(wait_time)
+                        # Don't count this as an attempt
+                        self.attempts -= 1
+                        continue
+                    else:
+                        self.logger.warning(
+                            f"API error: Status code {response.status_code}, "
+                            f"Response: {response.text[:200]}..."
                         )
                         
-                        # Process repos to match our standard format
-                        period_repos = []
-                        for repo in repos:
-                            # Skip repos we already have
-                            if any(r['full_name'] == repo['full_name'] for r in all_repos):
-                                continue
-                                
-                            repo_data = {
-                                'id': repo['id'],
-                                'name': repo['name'],
-                                'full_name': repo['full_name'],
-                                'owner': repo['owner']['login'],
-                                'html_url': repo['html_url'],
-                                'description': repo.get('description'),
-                                'created_at': repo['created_at'],
-                                'updated_at': repo['updated_at'],
-                                'pushed_at': repo.get('pushed_at'),
-                                'stargazers_count': repo.get('stargazers_count', 0),
-                                'forks_count': repo.get('forks_count', 0),
-                                'language': repo.get('language'),
-                                'visibility': repo.get('visibility', 'public'),
-                                'size': repo.get('size', 0),  # Size in KB
-                                'sampled_from': hour_str  # Add the time period this repo was sampled from
-                            }
-                            
-                            period_repos.append(repo_data)
-                            
-                        # Add new repos from this period
-                        all_repos.extend(period_repos)
-                        added_count = len(period_repos)
-                        self.logger.info(f"Added {added_count} new repositories from this period")
-                        
-                        # If we've added enough repos, we can stop
-                        if len(all_repos) >= repos_to_collect:
-                            self.logger.info(f"Reached target of {repos_to_collect} repositories. Stopping sampling.")
-                            break
-                    else:
-                        self.logger.info(f"No repositories found in period {hour_str}")
-                
-                elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
-                    # Handle rate limiting - wait until reset
-                    wait_time = self._calculate_rate_limit_wait_time()
-                    self.logger.warning(f"Rate limit exceeded. Waiting {wait_time:.1f} seconds...")
+                    # Mandatory wait between requests to avoid rate limiting
+                    wait_time = min_wait + random.uniform(0, 0.5)
+                    self.logger.debug(f"Waiting {wait_time:.1f} seconds before next request...")
                     time.sleep(wait_time)
-                    # Don't count this as an attempt
-                    self.attempts -= 1
-                    continue
-                else:
-                    self.logger.warning(
-                        f"API error: Status code {response.status_code}, "
-                        f"Response: {response.text[:200]}..."
-                    )
                     
-                # Mandatory wait between requests to avoid rate limiting
-                wait_time = min_wait + random.uniform(0, 0.5)
-                self.logger.debug(f"Waiting {wait_time:.1f} seconds before next request...")
-                time.sleep(wait_time)
-                
-            except Exception as e:
-                self.logger.error(f"Error sampling time period {hour_str}: {str(e)}")
-                time.sleep(min_wait * 2)  # Longer delay on error
+                except Exception as e:
+                    self.logger.error(f"Error sampling time period {hour_str}: {str(e)}")
+                    time.sleep(min_wait * 2)  # Longer delay on error
         
         # Report summary
         elapsed_time = time.time() - start_time
