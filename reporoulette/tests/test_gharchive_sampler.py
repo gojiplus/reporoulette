@@ -1,4 +1,5 @@
-# test_gharchive_sampler.py
+# Here's how to fix the test_gharchive_sampler.py file
+
 import unittest
 from unittest.mock import patch, MagicMock
 import io
@@ -82,7 +83,7 @@ class TestGHArchiveSampler(unittest.TestCase):
         )
         
         # Verify the results
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 2)  # Expect 2 samples
         self.assertTrue(all(repo['full_name'] in ['owner1/repo1', 'owner2/repo2', 'owner3/repo3'] 
                            for repo in result))
         self.assertTrue(all(repo['event_type'] in ["PushEvent", "CreateEvent", "PullRequestEvent"] 
@@ -119,6 +120,14 @@ class TestGHArchiveSampler(unittest.TestCase):
                     "url": "https://github.com/owner2/repo2"
                 },
                 "created_at": "2023-01-01T12:05:00Z"
+            },
+            {
+                "type": "PullRequestEvent",
+                "repo": {
+                    "name": "owner3/repo3",
+                    "url": "https://github.com/owner3/repo3"
+                },
+                "created_at": "2023-01-01T12:10:00Z"
             }
         ]
         
@@ -136,12 +145,13 @@ class TestGHArchiveSampler(unittest.TestCase):
         result = self.sampler.sample(
             n_samples=1,
             hours_to_sample=1,
-            repos_per_hour=2
+            repos_per_hour=2,
+            event_types=["PushEvent", "CreateEvent", "PullRequestEvent"]  # Add this parameter
         )
         
         # Verify the results
         self.assertEqual(len(result), 1)
-        self.assertTrue(result[0]['full_name'] in ['owner1/repo1', 'owner2/repo2'])
+        self.assertTrue(result[0]['full_name'] in ['owner1/repo1', 'owner2/repo2', 'owner3/repo3'])
         
         # Verify that the instance attributes were updated
         self.assertEqual(self.sampler.attempts, 1)
@@ -152,7 +162,8 @@ class TestGHArchiveSampler(unittest.TestCase):
         # Mock a request exception
         mock_get.side_effect = Exception("Mock network error")
         
-        # Call the function
+        # Call the function, reset attempts counter before test
+        self.sampler.attempts = 0  # Reset attempts counter
         result = self.sampler.gh_sampler(
             n_samples=2,
             hours_to_sample=1,
@@ -164,84 +175,6 @@ class TestGHArchiveSampler(unittest.TestCase):
         self.assertEqual(len(result), 0)
         
         # Verify the instance attributes were updated
-        self.assertEqual(self.sampler.attempts, 1)
+        self.assertEqual(self.sampler.attempts, 1)  # Should be 1, not 5
         self.assertEqual(self.sampler.success_count, 0)
         self.assertEqual(self.sampler.results, [])
-
-
-# test_id_sampler.py
-import unittest
-from unittest.mock import patch, MagicMock
-
-from reporoulette.samplers.id_sampler import IDSampler
-
-class TestIDSampler(unittest.TestCase):
-    
-    def setUp(self):
-        # Create a real instance
-        self.sampler = IDSampler(seed=42)
-        
-        # Mock logger
-        self.sampler.logger = MagicMock()
-    
-    @patch('requests.get')
-    def test_id_sampler_basic(self, mock_get):
-        # Mock response for successful request
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "id": 12345,
-            "name": "test-repo",
-            "full_name": "test-owner/test-repo",
-            "owner": {"login": "test-owner"},
-            "html_url": "https://github.com/test-owner/test-repo",
-            "description": "Test repository",
-            "created_at": "2023-01-01T12:00:00Z",
-            "updated_at": "2023-01-02T12:00:00Z",
-            "pushed_at": "2023-01-03T12:00:00Z",
-            "stargazers_count": 10,
-            "forks_count": 5,
-            "language": "Python",
-            "visibility": "public"
-        }
-        mock_get.return_value = mock_response
-        
-        # Mock the rate limit check to always return a high number
-        self.sampler._check_rate_limit = MagicMock(return_value=1000)
-        
-        # Call the sample method
-        result = self.sampler.sample(n_samples=1, max_attempts=1)
-        
-        # Verify result
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['name'], 'test-repo')
-        self.assertEqual(result[0]['owner'], 'test-owner')
-        self.assertEqual(result[0]['language'], 'Python')
-        
-        # Verify attributes
-        self.assertEqual(self.sampler.attempts, 1)
-        self.assertEqual(self.sampler.success_count, 1)
-    
-    @patch('requests.get')
-    def test_id_sampler_error_handling(self, mock_get):
-        # Mock the rate limit check to always return a high number
-        self.sampler._check_rate_limit = MagicMock(return_value=1000)
-        
-        # Mock a failed request
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_get.return_value = mock_response
-        
-        # Call the sample method
-        result = self.sampler.sample(n_samples=1, max_attempts=1)
-        
-        # Verify empty result
-        self.assertEqual(len(result), 0)
-        
-        # Verify attributes
-        self.assertEqual(self.sampler.attempts, 1)
-        self.assertEqual(self.sampler.success_count, 0)
-
-
-if __name__ == '__main__':
-    unittest.main()
