@@ -3,6 +3,10 @@ import logging
 import sys
 import random
 import time
+import requests
+import gzip
+import json
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from .base import BaseSampler
@@ -11,7 +15,7 @@ class GHArchiveSampler(BaseSampler):
     """
     Sample repositories by downloading and processing GH Archive files.
     
-    This sampler randomly selects hours from GitHub's event history, downloads
+    This sampler randomly selects days from GitHub's event history, downloads
     the corresponding archive files, and extracts repository information.
     """
     def __init__(self, token: Optional[str] = None, seed: Optional[int] = None, log_level: int = logging.INFO):
@@ -72,8 +76,8 @@ class GHArchiveSampler(BaseSampler):
     def gh_sampler(
         self,
         n_samples: int = 100,
-        hours_to_sample: int = 10,
-        repos_per_hour: int = 10,
+        days_to_sample: int = 5,
+        repos_per_day: int = 20,
         years_back: int = 10,
         event_types: List[str] = ["PushEvent", "CreateEvent", "PullRequestEvent"],
         **kwargs
@@ -81,13 +85,13 @@ class GHArchiveSampler(BaseSampler):
         """
         Sample repositories by downloading and processing GH Archive files.
         
-        This method samples GitHub repositories by randomly selecting hours,
+        This method samples GitHub repositories by randomly selecting days,
         downloading the corresponding archive files, and extracting repository information.
         
         Args:
             n_samples: Target number of repositories to sample
-            hours_to_sample: Number of random hours to sample
-            repos_per_hour: Repositories to sample per hour
+            days_to_sample: Number of random days to sample
+            repos_per_day: Repositories to sample per day
             years_back: How many years to look back
             event_types: Types of GitHub events to consider
             **kwargs: Additional filters to apply
@@ -95,14 +99,9 @@ class GHArchiveSampler(BaseSampler):
         Returns:
             List of repository data
         """
-        import requests
-        import gzip
-        import json
-        from datetime import datetime, timedelta
-        
         self.logger.info(
-            f"Sampling via archives: n_samples={n_samples}, hours_to_sample={hours_to_sample}, "
-            f"repos_per_hour={repos_per_hour}, years_back={years_back}, "
+            f"Sampling via archives: n_samples={n_samples}, days_to_sample={days_to_sample}, "
+            f"repos_per_day={repos_per_day}, years_back={years_back}, "
             f"event_types={event_types}"
         )
         
@@ -113,165 +112,172 @@ class GHArchiveSampler(BaseSampler):
         start_time = time.time()
         
         # Calculate parameters to ensure we get enough samples
-        hours_needed = max(1, (n_samples + repos_per_hour - 1) // repos_per_hour)
-        hours_to_sample = max(hours_to_sample, hours_needed)
-        self.logger.debug(f"Adjusted hours_to_sample to {hours_to_sample} to ensure enough data")
+        days_needed = max(1, (n_samples + repos_per_day - 1) // repos_per_day)
+        days_to_sample = max(days_to_sample, days_needed)
+        self.logger.debug(f"Adjusted days_to_sample to {days_to_sample} to ensure enough data")
         
-        # Generate random hours
-        random_hours = []
+        # Generate random days
+        random_days = []
         now = datetime.now()
         
-        for _ in range(hours_to_sample):
+        for _ in range(days_to_sample):
             # Random days back (within years_back)
             days_back = random.randint(1, years_back * 365)
-            # Random hour of the day
-            hour = random.randint(0, 23)
             
             target_date = now - timedelta(days=days_back)
-            target_date = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            # Set to beginning of day
+            target_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
             
-            random_hours.append(target_date)
+            random_days.append(target_date)
             
-        self.logger.debug(f"Generated {len(random_hours)} random hours to sample")
+        self.logger.debug(f"Generated {len(random_days)} random days to sample")
         
-        # Process each random hour
-        all_repos = []
-        processed_hours = 0
+        # Process each random day
+        all_repos = {}  # Use dict to avoid duplicates across different hours of the same day
+        processed_days = 0
         errors = 0
         
-        for i, target_date in enumerate(random_hours):
-            # Format the date for the archive URL: YYYY-MM-DD-H
-            archive_date = target_date.strftime('%Y-%m-%d-%-H')
-            archive_url = f"https://data.gharchive.org/{archive_date}.json.gz"
+        for i, target_date in enumerate(random_days):
+            # Format the date string for logging
+            day_str = target_date.strftime('%Y-%m-%d')
+            self.logger.info(f"Processing day {i+1}/{days_to_sample}: {day_str}")
             
-            self.logger.info(f"Processing archive {i+1}/{hours_to_sample}: {archive_date}, URL: {archive_url}")
+            # Process all 24 hours of the day
+            day_repos = {}
+            day_events_processed = 0
+            day_events_skipped = 0
+            day_events_error = 0
+            day_process_start = time.time()
             
-            try:
-                # Download the archive
-                download_start = time.time()
-                self.logger.debug(f"Downloading archive: {archive_url}")
-                response = requests.get(archive_url, stream=True, timeout=30)
-                response.raise_for_status()  # Raise an exception for HTTP errors
-                download_time = time.time() - download_start
-                self.logger.debug(f"Download completed in {download_time:.2f} seconds")
+            for hour in range(24):
+                # Format the date for the archive URL: YYYY-MM-DD-H
+                archive_date = target_date.replace(hour=hour).strftime('%Y-%m-%d-%-H')
+                archive_url = f"https://data.gharchive.org/{archive_date}.json.gz"
                 
-                # Process the archive
-                hour_repos = {}  # Use dict to avoid duplicates within the same hour
-                process_start = time.time()
-                events_processed = 0
-                events_skipped = 0
-                events_error = 0
+                self.logger.debug(f"Processing hour {hour} archive: {archive_url}")
                 
-                # Decompress and process line by line
-                self.logger.debug(f"Processing archive content")
-                with gzip.GzipFile(fileobj=response.raw) as f:
-                    for line in f:
-                        try:
-                            event = json.loads(line.decode('utf-8'))
-                            events_processed += 1
-                            
-                            # Only process specified event types
-                            if event.get('type') not in event_types:
-                                events_skipped += 1
-                                continue
-                            
-                            # Extract repo information
-                            repo = event.get('repo', {})
-                            repo_name = repo.get('name')
-                            
-                            # Skip if no valid repo name
-                            if not repo_name or '/' not in repo_name:
-                                events_skipped += 1
-                                continue
-                            
-                            # Skip if we already have this repo from this hour
-                            if repo_name in hour_repos:
-                                events_skipped += 1
-                                continue
-                            
-                            # Get additional repo information
-                            owner, name = repo_name.split('/', 1)
-                            
-                            repo_data = {
-                                'full_name': repo_name,
-                                'name': name,
-                                'owner': owner,
-                                'html_url': repo.get('url') or f"https://github.com/{repo_name}",
-                                'created_at': event.get('created_at'),
-                                'sampled_from': archive_date,
-                                'event_type': event.get('type')
-                            }
-                            
-                            # Store repo in our hour collection
-                            hour_repos[repo_name] = repo_data
-                            
-                            # Log periodically about repos found
-                            if len(hour_repos) % 5 == 0:
-                                self.logger.debug(f"Found {len(hour_repos)} repositories so far in this archive")
-                            
-                            # Break if we have enough repos for this hour
-                            if len(hour_repos) >= repos_per_hour:
-                                self.logger.debug(f"Reached target of {repos_per_hour} repositories for this hour")
-                                break
-                                
-                        except json.JSONDecodeError:
-                            events_error += 1
-                            continue  # Skip invalid JSON lines
-                        except Exception as e:
-                            events_error += 1
-                            self.logger.warning(f"Error processing event: {e}")
-                            continue
-                
-                process_time = time.time() - process_start
-                
-                # Add repos from this hour to our overall collection
-                all_repos.extend(list(hour_repos.values()))
-                processed_hours += 1
-                
-                self.logger.info(
-                    f"Found {len(hour_repos)} repositories from {archive_date} "
-                    f"(processed {events_processed} events in {process_time:.2f} seconds, "
-                    f"skipped {events_skipped}, errors {events_error})"
-                )
-                
-                # Log progress towards overall target
-                self.logger.info(f"Progress: {len(all_repos)}/{n_samples} repositories collected")
-                
-                # Break if we have enough repositories
-                if len(all_repos) >= n_samples:
-                    all_repos = all_repos[:n_samples]  # Trim to exact count
-                    self.logger.info(f"Reached target sample size of {n_samples} repositories")
-                    break
+                try:
+                    # Download the archive
+                    response = requests.get(archive_url, stream=True, timeout=30)
+                    if response.status_code != 200:
+                        self.logger.warning(f"Failed to download archive {archive_url}: HTTP {response.status_code}")
+                        continue
                     
-            except requests.RequestException as e:
-                self.logger.error(f"Failed to download archive {archive_url}: {e}")
+                    # Process the archive
+                    events_processed = 0
+                    
+                    # Decompress and process line by line
+                    with gzip.GzipFile(fileobj=response.raw) as f:
+                        for line in f:
+                            try:
+                                event = json.loads(line.decode('utf-8'))
+                                events_processed += 1
+                                day_events_processed += 1
+                                
+                                # Only process specified event types
+                                if event.get('type') not in event_types:
+                                    day_events_skipped += 1
+                                    continue
+                                
+                                # Extract repo information
+                                repo = event.get('repo', {})
+                                repo_name = repo.get('name')
+                                
+                                # Skip if no valid repo name
+                                if not repo_name or '/' not in repo_name:
+                                    day_events_skipped += 1
+                                    continue
+                                
+                                # Skip if we already have this repo from this day
+                                if repo_name in day_repos:
+                                    day_events_skipped += 1
+                                    continue
+                                
+                                # Get additional repo information
+                                owner, name = repo_name.split('/', 1)
+                                
+                                repo_data = {
+                                    'full_name': repo_name,
+                                    'name': name,
+                                    'owner': owner,
+                                    'html_url': repo.get('url') or f"https://github.com/{repo_name}",
+                                    'created_at': event.get('created_at'),
+                                    'sampled_from': day_str,  # Store day instead of hour
+                                    'event_type': event.get('type')
+                                }
+                                
+                                # Store repo in our day collection
+                                day_repos[repo_name] = repo_data
+                                                                
+                                # Break if we have enough repos for this day
+                                if len(day_repos) >= repos_per_day:
+                                    self.logger.debug(f"Reached target of {repos_per_day} repositories for this day")
+                                    break
+                                    
+                            except json.JSONDecodeError:
+                                day_events_error += 1
+                                continue  # Skip invalid JSON lines
+                            except Exception as e:
+                                day_events_error += 1
+                                self.logger.warning(f"Error processing event: {e}")
+                                continue
+                    
+                    # If we have enough repos for this day, stop processing hours
+                    if len(day_repos) >= repos_per_day:
+                        break
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error processing hour {hour} archive: {e}")
+                    continue
+            
+            # Add repos from this day to our overall collection
+            for repo_name, repo_data in day_repos.items():
+                all_repos[repo_name] = repo_data
+                
+            day_process_time = time.time() - day_process_start
+            
+            if day_repos:
+                processed_days += 1
+                self.logger.info(
+                    f"Found {len(day_repos)} repositories from {day_str} "
+                    f"(processed {day_events_processed} events in {day_process_time:.2f} seconds, "
+                    f"skipped {day_events_skipped}, errors {day_events_error})"
+                )
+            else:
                 errors += 1
-                continue
-            except Exception as e:
-                self.logger.error(f"Error processing archive {archive_url}: {e}")
-                errors += 1
-                continue
+                self.logger.warning(f"No repositories found for day {day_str}")
+            
+            # Log progress towards overall target
+            self.logger.info(f"Progress: {len(all_repos)}/{n_samples} repositories collected")
+            
+            # Break if we have enough repositories
+            if len(all_repos) >= n_samples:
+                self.logger.info(f"Reached target sample size of {n_samples} repositories")
+                break
+        
+        # Convert to list
+        result_repos = list(all_repos.values())
         
         # Calculate processing statistics
         elapsed = time.time() - start_time
-        hours_per_second = processed_hours / elapsed if elapsed > 0 else 0
-        repos_per_second = len(all_repos) / elapsed if elapsed > 0 else 0
+        days_per_second = processed_days / elapsed if elapsed > 0 else 0
+        repos_per_second = len(result_repos) / elapsed if elapsed > 0 else 0
         
         # Log summary
         self.logger.info(
             f"Completed archive sampling in {elapsed:.2f} seconds: "
-            f"found {len(all_repos)} repositories from {processed_hours} hours "
-            f"(errors: {errors}, rate: {hours_per_second:.2f} hours/sec, "
+            f"found {len(result_repos)} repositories from {processed_days} days "
+            f"(errors: {errors}, rate: {days_per_second:.2f} days/sec, "
             f"{repos_per_second:.2f} repos/sec)"
         )
         
         # Randomize the final list to avoid time-based patterns
         if self._seed is not None:
             random.seed(self._seed)
-        random.shuffle(all_repos)
+        random.shuffle(result_repos)
         
         # Limit to requested sample size
-        result = all_repos[:n_samples]
+        result = result_repos[:n_samples]
         
         # Apply any filters
         filtered_count_before = len(result)
@@ -284,8 +290,8 @@ class GHArchiveSampler(BaseSampler):
                     f"{filtered_count_after} repositories remaining"
                 )
         
-        self.attempts = hours_to_sample
-        self.success_count = processed_hours
+        self.attempts = days_to_sample
+        self.success_count = processed_days
         self.results = result
         
         return result
