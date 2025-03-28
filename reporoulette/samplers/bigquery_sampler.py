@@ -12,6 +12,7 @@ except ImportError:
     BIGQUERY_AVAILABLE = False
 
 from .base import BaseSampler
+from .bq_utils import execute_query, filter_repos, format_timestamp_query
 
 class BigQuerySampler(BaseSampler):
     """
