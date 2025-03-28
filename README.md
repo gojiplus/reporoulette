@@ -25,7 +25,9 @@ RepoRoulette provides three distinct methods for random GitHub repository sampli
 
 ### 1. 🎯 ID-Based Sampling
 
-Uses GitHub's sequential repository ID system to generate truly random samples by probing random IDs from the valid ID range.
+Uses GitHub's sequential repository ID system to generate truly random samples by probing random IDs from the valid ID range. The downside of using the method is that the hit rate can be low (as many IDs are invalid, partly because the repo. is private or abandoned, etc.) And any filtering on repo. characteristics must wait till you have the names.
+
+The function will continue to sample till either `max_attempts` or till `n_samples`. You can pass the `seed` for reproducibility.
 
 ```python
 from reporoulette import IDSampler
@@ -41,16 +43,9 @@ print(f"Success rate: {sampler.success_rate:.2f}%")
 print(f"Samples collected: {len(repos)}")
 ```
 
-**Advantages:**
-- Simple
-
-**Limitations:**
-- Lower hit rate (many IDs are invalid)
-- No control over repository characteristics
-
 ### 2. ⏱️ Temporal Sampling
 
-Randomly selects time points (date/hour combinations) within a specified range and then retrieves repositories updated during those periods.
+Randomly selects time points (date/hour combinations) within a specified range and then retrieves repositories updated during those periods. 
 
 ```python
 from reporoulette import TemporalSampler
@@ -78,14 +73,9 @@ filtered_repos = sampler.sample(
 )
 ```
 
-**Advantages:**
-- Higher hit rate than ID-based sampling
-- Can filter by repository characteristics
-- Allows for stratified sampling by time periods
-
 ### 3. 🔍 BigQuery Sampling
 
-Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. We hit the hour files than the much larger day files (which can really run up a bill).
+Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. We provide three methods --- standard sampler, sampling based on the commits table, and sampling based on the hour buckets. The virtue of the first is its simplicity. 
 
 ```python
 from reporoulette import BigQuerySampler

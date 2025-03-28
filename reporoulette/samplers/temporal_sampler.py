@@ -12,8 +12,8 @@ class TemporalSampler(BaseSampler):
     """
     Sample repositories by randomly selecting time points and fetching repos updated in those periods.
     
-    This sampler selects random date/hour combinations within a specified range and
-    retrieves repositories that were updated during those time periods.
+    This sampler selects random date/hour combinations within a specified range,
+    weights them by repository count, and retrieves repositories with proportional sampling.
     """
     def __init__(
         self,
@@ -124,6 +124,49 @@ class TemporalSampler(BaseSampler):
         
         return start_str, end_str
     
+    def _build_search_query(
+        self,
+        start_time_str: str,
+        end_time_str: str,
+        min_stars: int = 0,
+        min_size_kb: int = 0,
+        language: Optional[str] = None,
+        **kwargs
+    ) -> str:
+        """
+        Build a search query string for the GitHub API.
+        
+        Args:
+            start_time_str: Start time in ISO format
+            end_time_str: End time in ISO format
+            min_stars: Minimum number of stars
+            min_size_kb: Minimum repository size in KB
+            language: Programming language to filter by
+            **kwargs: Additional filters
+            
+        Returns:
+            Query string
+        """
+        # Construct query for repositories updated in this time period
+        query_parts = [f"pushed:{start_time_str}..{end_time_str}"]
+        
+        # Add language filter if specified
+        if language:
+            query_parts.append(f"language:{language}")
+        elif 'languages' in kwargs and kwargs['languages']:
+            query_parts.append(f"language:{kwargs['languages'][0]}")
+            
+        # Add star filter if specified
+        if min_stars > 0:
+            query_parts.append(f"stars:>={min_stars}")
+            
+        # Add size filter if specified
+        if min_size_kb > 0:
+            query_parts.append(f"size:>={min_size_kb}")
+            
+        # Join query parts
+        return " ".join(query_parts)
+    
     def _check_rate_limit(self) -> int:
         """
         Check GitHub API rate limit and return remaining requests.
@@ -189,9 +232,12 @@ class TemporalSampler(BaseSampler):
             self.logger.error(f"Error calculating rate limit wait time: {str(e)}")
             return 60  # Default to 60s if can't determine
     
+# Removed _get_repository_counts method as we're now getting counts in the first pass
+    
     def sample(
         self, 
         hours_to_sample: int = 10,
+        repos_to_collect: int = 100,
         per_page: int = 100,
         min_wait: float = 1.0,
         min_stars: int = 0,
@@ -200,10 +246,11 @@ class TemporalSampler(BaseSampler):
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Sample repositories by randomly selecting time periods.
+        Sample repositories by randomly selecting time periods with weighting based on repo count.
         
         Args:
-            hours_to_sample: Number of random hours to sample
+            hours_to_sample: Number of random hours to initially sample for count assessment
+            repos_to_collect: Target number of repositories to collect
             per_page: Number of results per page (max 100)
             min_wait: Minimum wait time between API requests
             min_stars: Minimum number of stars (0 for no filtering)
@@ -215,14 +262,10 @@ class TemporalSampler(BaseSampler):
             List of repository data
         """
         self.logger.info(
-            f"Starting temporal sampling: hours_to_sample={hours_to_sample}, "
-            f"per_page={per_page}, min_stars={min_stars}, min_size_kb={min_size_kb}, "
-            f"language={language or 'None'}"
+            f"Starting weighted temporal sampling: hours_to_sample={hours_to_sample}, "
+            f"repos_to_collect={repos_to_collect}, per_page={per_page}, "
+            f"min_stars={min_stars}, min_size_kb={min_size_kb}, language={language or 'None'}"
         )
-        
-        # Log filter criteria if any
-        if kwargs:
-            self.logger.info(f"Additional filter criteria: {kwargs}")
         
         headers = {}
         if self.token:
@@ -230,83 +273,197 @@ class TemporalSampler(BaseSampler):
             headers['Authorization'] = f'token {self.token}'
         else:
             self.logger.warning("No GitHub API token provided. Rate limits will be restricted.")
-            
+        
+        # Initialize variables
         all_repos = []
-        attempted_periods = set()
+        period_data = {}  # Maps periods to their repo counts and first page data
         self.attempts = 0
         self.success_count = 0
-        
-        # Capture start time for reporting
         start_time = time.time()
         
-        # Generate all random datetimes upfront
-        random_hours = []
+        # Generate random hours for initial sampling
+        initial_hours = []
         for _ in range(hours_to_sample):
             random_dt = self._random_datetime()
-            random_hours.append(random_dt)
+            initial_hours.append(random_dt)
         
         # Sort chronologically for better logging
-        random_hours.sort()
+        initial_hours.sort()
         
-        self.logger.info(f"Generated {len(random_hours)} random time periods to sample")
+        self.logger.info(f"Generated {len(initial_hours)} random time periods to sample")
         
-        # Process each random hour
-        for i, random_time in enumerate(random_hours):
+        # Step 1: Get the first page of results and total counts for each period in one pass
+        for i, period in enumerate(initial_hours):
             # Check rate limit periodically
             if i % 5 == 0:
                 remaining = self._check_rate_limit()
                 if remaining <= self.rate_limit_safety:
                     self.logger.warning(
                         f"Approaching GitHub API rate limit ({remaining} remaining). "
-                        f"Stopping after {i}/{hours_to_sample} time periods."
+                        f"Stopping initial sampling after {i}/{hours_to_sample} time periods."
                     )
                     break
-                    
-            start_time_str, end_time_str = self._format_date_for_query(random_time)
             
-            # Skip if we've already tried this period
-            period_key = f"{start_time_str}-{end_time_str}"
-            if period_key in attempted_periods:
-                self.logger.debug(f"Skipping already attempted period: {period_key}")
-                continue
-                
-            attempted_periods.add(period_key)
-            self.attempts += 1
+            start_time_str, end_time_str = self._format_date_for_query(period)
+            hour_str = period.strftime("%Y-%m-%d %H:00")
             
-            # Log the period we're querying
-            hour_str = random_time.strftime("%Y-%m-%d %H:00")
-            self.logger.info(
-                f"Sampling period {i+1}/{hours_to_sample}: {hour_str} "
-                f"(collected {len(all_repos)} repositories so far)"
+            # Build query
+            query = self._build_search_query(
+                start_time_str, end_time_str, min_stars, min_size_kb, language, **kwargs
             )
             
-            # Construct query for repositories updated in this time period
-            query_parts = [f"pushed:{start_time_str}..{end_time_str}"]
+            # Construct the URL for first page
+            url = f"{self.api_base_url}/search/repositories?q={query}&sort=updated&order=desc&per_page={per_page}&page=1"
             
-            # Add language filter if specified
-            if language:
-                query_parts.append(f"language:{language}")
-                self.logger.debug(f"Added language filter: {language}")
-            elif 'languages' in kwargs and kwargs['languages']:
-                query_parts.append(f"language:{kwargs['languages'][0]}")
-                self.logger.debug(f"Added language filter: {kwargs['languages'][0]}")
-                
-            # Add star filter if specified
-            if min_stars > 0:
-                query_parts.append(f"stars:>={min_stars}")
-                self.logger.debug(f"Added minimum stars filter: {min_stars}")
-                
-            # Add size filter if specified
-            if min_size_kb > 0:
-                query_parts.append(f"size:>={min_size_kb}")
-                self.logger.debug(f"Added minimum size filter: {min_size_kb} KB")
-                
-            # Join query parts
-            query = " ".join(query_parts)
+            self.logger.info(f"Sampling period {i+1}/{hours_to_sample}: {hour_str}")
             
-            # Construct the URL
-            url = f"{self.api_base_url}/search/repositories?q={query}&sort=updated&order=desc&per_page={per_page}"
-            self.logger.debug(f"Query URL: {url}")
+            try:
+                self.attempts += 1
+                response = requests.get(url, headers=headers)
+                
+                if response.status_code == 200:
+                    results = response.json()
+                    count = results['total_count']
+                    
+                    if count > 0:
+                        self.success_count += 1
+                        self.logger.info(f"Found {count} repositories in period {hour_str}")
+                        
+                        # Store period data including count and first page results
+                        period_data[period] = {
+                            'count': count,
+                            'first_page': results['items'],
+                            'hour_str': hour_str
+                        }
+                        
+                        # Process first page repos and add to collection
+                        period_repos = []
+                        for repo in results['items']:
+                            # Skip repos we already have
+                            if any(r['full_name'] == repo['full_name'] for r in all_repos):
+                                continue
+                                
+                            repo_data = {
+                                'id': repo['id'],
+                                'name': repo['name'],
+                                'full_name': repo['full_name'],
+                                'owner': repo['owner']['login'],
+                                'html_url': repo['html_url'],
+                                'description': repo.get('description'),
+                                'created_at': repo['created_at'],
+                                'updated_at': repo['updated_at'],
+                                'pushed_at': repo.get('pushed_at'),
+                                'stargazers_count': repo.get('stargazers_count', 0),
+                                'forks_count': repo.get('forks_count', 0),
+                                'language': repo.get('language'),
+                                'visibility': repo.get('visibility', 'public'),
+                                'size': repo.get('size', 0),  # Size in KB
+                                'sampled_from': hour_str  # Add the time period this repo was sampled from
+                            }
+                            
+                            period_repos.append(repo_data)
+                        
+                        # Add first page repos to our collection
+                        all_repos.extend(period_repos)
+                        self.logger.info(f"Added {len(period_repos)} repositories from first page")
+                    else:
+                        self.logger.info(f"No repositories found in period {hour_str}")
+                
+                elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
+                    wait_time = self._calculate_rate_limit_wait_time()
+                    self.logger.warning(f"Rate limit exceeded. Waiting {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    # Don't count this as an attempt
+                    self.attempts -= 1
+                    continue
+                else:
+                    self.logger.warning(
+                        f"API error: Status code {response.status_code}, "
+                        f"Response: {response.text[:200]}..."
+                    )
+                
+                # Mandatory wait between requests
+                wait_time = min_wait + random.uniform(0, 0.5)
+                time.sleep(wait_time)
+                
+            except Exception as e:
+                self.logger.error(f"Error sampling time period {hour_str}: {str(e)}")
+                time.sleep(min_wait * 2)  # Longer delay on error
+        
+        # Step 2: Create weighted distribution based on repository counts
+        # Filter out periods with zero repositories
+        valid_periods = {p: data['count'] for p, data in period_data.items() if data['count'] > 0}
+        
+        if not valid_periods:
+            self.logger.warning("No repositories found in any sampled time periods. Returning empty list.")
+            return []
+        
+        # Get enough repositories to meet our target
+        if len(all_repos) < repos_to_collect:
+            # Step 3: Create probability distribution for weighted sampling
+            periods = list(valid_periods.keys())
+            weights = [valid_periods[period] for period in periods]
+            total_weight = sum(weights)
+            
+            # Normalize weights to get probabilities
+            probs = [weight / total_weight for weight in weights]
+            
+            self.logger.info(
+                f"Created weighted distribution across {len(periods)} time periods "
+                f"(total weight: {total_weight})"
+            )
+            
+            # Log the top periods with highest weights
+            top_periods = sorted(valid_periods.items(), key=lambda x: x[1], reverse=True)[:5]
+            self.logger.info("Top 5 time periods by repository count:")
+            for period, count in top_periods:
+                hour_str = period_data[period]['hour_str']
+                self.logger.info(f"  {hour_str}: {count} repositories")
+            
+            # Step 4: Sample additional repositories from periods based on weighted distribution
+            while len(all_repos) < repos_to_collect:
+                # Check if we're approaching rate limit
+                if self.attempts % 5 == 0:
+                    remaining = self._check_rate_limit()
+                    if remaining <= self.rate_limit_safety:
+                        self.logger.warning(
+                            f"Approaching GitHub API rate limit ({remaining} remaining). "
+                            f"Stopping after collecting {len(all_repos)}/{repos_to_collect} repositories."
+                        )
+                        break
+                
+                # Select a time period using weighted random choice
+                period = random.choices(periods, weights=probs, k=1)[0]
+                period_info = period_data[period]
+                hour_str = period_info['hour_str']
+                count = period_info['count']
+                
+                # Skip if we've already collected enough from this period
+                # (To avoid repeatedly sampling the same popular period)
+                if sum(1 for repo in all_repos if repo.get('sampled_from') == hour_str) >= count / 2:
+                    continue
+                
+                start_time_str, end_time_str = self._format_date_for_query(period)
+                self.attempts += 1
+                
+                # Log the period we're querying
+                self.logger.info(
+                    f"Sampling weighted period: {hour_str} (weight: {count}) "
+                    f"- collected {len(all_repos)}/{repos_to_collect} repositories so far"
+                )
+                
+                # Build query
+                query = self._build_search_query(
+                    start_time_str, end_time_str, min_stars, min_size_kb, language, **kwargs
+                )
+                
+                # For periods with many repos, select a random page within the first N pages
+                # Skip page 1 since we already have it
+                max_page = min(10, (count // per_page) + 1)
+                page = 1 if max_page <= 1 else random.randint(2, max_page)
+                
+                # Construct the URL for additional page
+                url = f"{self.api_base_url}/search/repositories?q={query}&sort=updated&order=desc&per_page={per_page}&page={page}"
             
             try:
                 query_start_time = time.time()
@@ -322,7 +479,7 @@ class TemporalSampler(BaseSampler):
                         
                         self.logger.info(
                             f"Found {results['total_count']} repositories "
-                            f"(fetched {len(repos)} in {query_elapsed:.2f} seconds)"
+                            f"(fetched {len(repos)} from page {page} in {query_elapsed:.2f} seconds)"
                         )
                         
                         # Process repos to match our standard format
@@ -330,7 +487,6 @@ class TemporalSampler(BaseSampler):
                         for repo in repos:
                             # Skip repos we already have
                             if any(r['full_name'] == repo['full_name'] for r in all_repos):
-                                self.logger.debug(f"Skipping duplicate repository: {repo['full_name']}")
                                 continue
                                 
                             repo_data = {
@@ -353,9 +509,15 @@ class TemporalSampler(BaseSampler):
                             
                             period_repos.append(repo_data)
                             
-                        # Add all new repos from this period
+                        # Add new repos from this period
                         all_repos.extend(period_repos)
-                        self.logger.info(f"Added {len(period_repos)} new repositories from this period")
+                        added_count = len(period_repos)
+                        self.logger.info(f"Added {added_count} new repositories from this period")
+                        
+                        # If we've added enough repos, we can stop
+                        if len(all_repos) >= repos_to_collect:
+                            self.logger.info(f"Reached target of {repos_to_collect} repositories. Stopping sampling.")
+                            break
                     else:
                         self.logger.info(f"No repositories found in period {hour_str}")
                 
@@ -374,7 +536,6 @@ class TemporalSampler(BaseSampler):
                     )
                     
                 # Mandatory wait between requests to avoid rate limiting
-                # Use a fixed wait time with small jitter
                 wait_time = min_wait + random.uniform(0, 0.5)
                 self.logger.debug(f"Waiting {wait_time:.1f} seconds before next request...")
                 time.sleep(wait_time)
@@ -390,7 +551,7 @@ class TemporalSampler(BaseSampler):
         self.logger.info(
             f"Sampling completed in {elapsed_time:.2f} seconds: "
             f"{self.attempts} attempts, {self.success_count} successful ({success_rate:.1f}%), "
-            f"collected {len(all_repos)} repositories across {self.success_count} time periods"
+            f"collected {len(all_repos)} repositories"
         )
         
         # Apply any additional filters
