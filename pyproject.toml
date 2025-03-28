@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reporoulette"
-version = "0.1.1"
+version = "0.1.2"
 description = "Random sampling of GitHub repositories"
 readme = "README.md"
 authors = [
@@ -54,8 +54,8 @@ dev = [
 project = "reporoulette"
 author = "Gaurav Sood"
 copyright = "2025, Gaurav Sood"
-version = "0.1.1"
-release = "0.1.1"
+version = "0.1.2"
+release = "0.1.2"
 language = "en"
 extensions = [
     "sphinx.ext.autodoc",

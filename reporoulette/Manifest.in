@@ -1,0 +1,12 @@
+# Include specific files
+include README.md LICENSE requirements.txt
+
+# Exclude files or directories
+exclude tests/*.py
+exclude *.log
+exclude .env
+exclude credentials.json
+recursive-exclude __pycache__ *
+recursive-exclude .git *
+exclude .json
+exclude test.ipynb

@@ -1,65 +1,74 @@
 import unittest
 from unittest.mock import patch, MagicMock
 
+from reporoulette.samplers.id_sampler import IDSampler
+
 class TestIDSampler(unittest.TestCase):
     
     def setUp(self):
-        # Create a mock instance with basic required attributes
-        self.instance = MagicMock()
-        self.instance.logger = MagicMock()
-        self.instance._seed = 42  # Fixed seed for reproducibility
+        # Create a real instance
+        self.sampler = IDSampler(seed=42)
         
-        # Simulate importing the IDsampler method
-        # In a real test, you would import it properly from your module
-        from types import MethodType
-        
-        # This is a placeholder - replace with actual import in real code
-        def id_sampler(self, n_samples=100, source="default", **kwargs):
-            """Placeholder for the actual id_sampler method"""
-            # This would be replaced by your actual implementation
-            pass
-            
-        self.instance.id_sampler = MethodType(id_sampler, self.instance)
+        # Mock logger
+        self.sampler.logger = MagicMock()
     
-    @patch('your_module.SomeDataSource')  # Replace with actual data source class
-    def test_id_sampler_basic(self, mock_data_source):
-        # Set up mock data source to return sample IDs
-        mock_source_instance = MagicMock()
-        mock_source_instance.get_ids.return_value = [
-            {"id": "ID001", "metadata": {"type": "user", "created": "2023-01-01"}},
-            {"id": "ID002", "metadata": {"type": "product", "created": "2023-01-02"}},
-            {"id": "ID003", "metadata": {"type": "order", "created": "2023-01-03"}}
-        ]
-        mock_data_source.return_value = mock_source_instance
+    @patch('requests.get')  # Patch the requests.get directly
+    def test_id_sampler_basic(self, mock_get):
+        # Mock response for successful request
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "id": 12345,
+            "name": "test-repo",
+            "full_name": "test-owner/test-repo",
+            "owner": {"login": "test-owner"},
+            "html_url": "https://github.com/test-owner/test-repo",
+            "description": "Test repository",
+            "created_at": "2023-01-01T12:00:00Z",
+            "updated_at": "2023-01-02T12:00:00Z",
+            "pushed_at": "2023-01-03T12:00:00Z",
+            "stargazers_count": 10,
+            "forks_count": 5,
+            "language": "Python",
+            "visibility": "public"
+        }
+        mock_get.return_value = mock_response
         
-        # Call the ID sampler with minimal parameters
-        self.instance.id_sampler.return_value = mock_source_instance.get_ids.return_value[:2]
-        result = self.instance.id_sampler(n_samples=2, source="test_source")
+        # Mock the rate limit check to always return a high number
+        self.sampler._check_rate_limit = MagicMock(return_value=1000)
         
-        # Verify the results
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["id"], "ID001")
-        self.assertEqual(result[1]["id"], "ID002")
+        # Call the sample method
+        result = self.sampler.sample(n_samples=1, max_attempts=1)
         
-        # Verify the mock was called correctly
-        mock_data_source.assert_called_once_with("test_source")
-        mock_source_instance.get_ids.assert_called_once()
+        # Verify result
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['name'], 'test-repo')
+        self.assertEqual(result[0]['owner'], 'test-owner')
+        self.assertEqual(result[0]['language'], 'Python')
+        
+        # Verify attributes
+        self.assertEqual(self.sampler.attempts, 1)
+        self.assertEqual(self.sampler.success_count, 1)
     
-    @patch('your_module.SomeDataSource')
-    def test_id_sampler_error_handling(self, mock_data_source):
-        # Set up mock to raise an exception
-        mock_data_source.side_effect = Exception("Connection error")
+    @patch('requests.get')  # Patch the requests.get directly
+    def test_id_sampler_error_handling(self, mock_get):
+        # Mock the rate limit check to always return a high number
+        self.sampler._check_rate_limit = MagicMock(return_value=1000)
         
-        # Set up a mock return value for error case
-        self.instance.id_sampler.return_value = []
+        # Mock a failed request
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_get.return_value = mock_response
         
-        # Call the function
-        result = self.instance.id_sampler(n_samples=2, source="test_source")
+        # Call the sample method
+        result = self.sampler.sample(n_samples=1, max_attempts=1)
         
-        # Verify empty result on error
+        # Verify empty result
         self.assertEqual(len(result), 0)
         
-        # In a real test, you might also verify error logging
+        # Verify attributes
+        self.assertEqual(self.sampler.attempts, 1)
+        self.assertEqual(self.sampler.success_count, 0)
 
 if __name__ == '__main__':
     unittest.main()

@@ -5,7 +5,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![License](https://img.shields.io/pypi/l/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![Downloads](https://static.pepy.tech/badge/reporoulette)](https://pepy.tech/project/reporoulette)
-
+[![Python application](https://github.com/gojiplus/reporoulette/actions/workflows/python-app.yml/badge.svg)](https://github.com/gojiplus/reporoulette/actions/workflows/python-app.yml)
 
 ## 🚀 Installation
 
@@ -25,7 +25,9 @@ RepoRoulette provides three distinct methods for random GitHub repository sampli
 
 ### 1. 🎯 ID-Based Sampling
 
-Uses GitHub's sequential repository ID system to generate truly random samples by probing random IDs from the valid ID range.
+Uses GitHub's sequential repository ID system to generate truly random samples by probing random IDs from the valid ID range. The downside of using the method is that the hit rate can be low (as many IDs are invalid, partly because the repo. is private or abandoned, etc.) And any filtering on repo. characteristics must wait till you have the names.
+
+The function will continue to sample till either `max_attempts` or till `n_samples`. You can pass the `seed` for reproducibility.
 
 ```python
 from reporoulette import IDSampler
@@ -41,16 +43,9 @@ print(f"Success rate: {sampler.success_rate:.2f}%")
 print(f"Samples collected: {len(repos)}")
 ```
 
-**Advantages:**
-- Simple
-
-**Limitations:**
-- Lower hit rate (many IDs are invalid)
-- No control over repository characteristics
-
 ### 2. ⏱️ Temporal Sampling
 
-Randomly selects time points (date/hour combinations) within a specified range and then retrieves repositories updated during those periods.
+Randomly selects time points (date/hour combinations) within a specified range and then retrieves repositories updated during those periods. 
 
 ```python
 from reporoulette import TemporalSampler
@@ -78,14 +73,9 @@ filtered_repos = sampler.sample(
 )
 ```
 
-**Advantages:**
-- Higher hit rate than ID-based sampling
-- Can filter by repository characteristics
-- Allows for stratified sampling by time periods
-
 ### 3. 🔍 BigQuery Sampling
 
-Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. We hit the hour files than the much larger day files (which can really run up a bill).
+Leverages Google BigQuery's GitHub dataset for high-volume, efficient sampling. We provide three methods --- standard sampler, sampling based on the commits table, and sampling based on the hour buckets. The virtue of the first is its simplicity. 
 
 ```python
 from reporoulette import BigQuerySampler
@@ -123,6 +113,36 @@ specialty_repos = sampler.sample(
 - Requires Google Cloud Platform account and billing
 - Dataset may have a slight delay (typically 24-48 hours)
 
+### 4. GH Archive Sampler
+
+```python
+rom reporoulette.samplers import GHArchiveSampler
+
+sampler = GHArchiveSampler(seed=42)
+    
+    # Sample repositories using the gh_sampler method directly
+    # (This is the method implemented by GHArchiveSampler, not the abstract sample method)
+repos = sampler.gh_sampler(
+        n_samples=10,              # Number of repositories to sample
+        hours_to_sample=5,         # Sample from 5 random hours
+        repos_per_hour=3,          # Collect up to 3 repos per hour
+        years_back=3,              # Sample from last 3 years
+        event_types=["PushEvent", "CreateEvent", "PullRequestEvent"]  # Types of events to consider
+    )
+    
+    
+    # Display the sampled repositories
+print(f"Successfully sampled {len(repos)} repositories:\n")
+    
+for i, repo in enumerate(repos, 1):
+    print(f"{i}. {repo['full_name']}")
+    print(f"   URL: {repo['html_url']}")
+    print(f"   Language: {repo.get('language', 'Unknown')}")
+    print(f"   Event: {repo.get('event_type')}")
+    print(f"   Sampled from: {repo.get('sampled_from')}")
+    print()
+```
+
 ## 📊 Example Use Cases
 
 - **Academic Research**: Study coding practices across different languages and communities
@@ -147,4 +167,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-Built with ❤️ by [Your Name/Organization]
+Built with ❤️ by Gojiplus
