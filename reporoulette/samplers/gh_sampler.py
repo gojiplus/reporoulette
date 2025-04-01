@@ -79,19 +79,16 @@ class GHArchiveSampler(BaseSampler):
         days_to_sample: int = 5,
         repos_per_day: int = 20,
         years_back: int = 10,
-        event_types: List[str] = ["PushEvent", "CreateEvent", "PullRequestEvent"],
+        event_types: List[str] = ["CreateEvent", "PushEvent", "PullRequestEvent"],
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Sample repositories by downloading and processing GH Archive files.
-        
-        This method samples GitHub repositories by randomly selecting days,
-        downloading the corresponding archive files, and extracting repository information.
+        Sample repositories by downloading and processing full day's GH Archive files.
         
         Args:
             n_samples: Target number of repositories to sample
             days_to_sample: Number of random days to sample
-            repos_per_day: Repositories to sample per day
+            repos_per_day: Maximum repositories to sample per day
             years_back: How many years to look back
             event_types: Types of GitHub events to consider
             **kwargs: Additional filters to apply
@@ -129,11 +126,9 @@ class GHArchiveSampler(BaseSampler):
             target_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
             
             random_days.append(target_date)
-            
-        self.logger.debug(f"Generated {len(random_days)} random days to sample")
         
         # Process each random day
-        all_repos = {}  # Use dict to avoid duplicates across different hours of the same day
+        all_repos = {}  # Use dict to avoid duplicates
         processed_days = 0
         errors = 0
         
@@ -142,118 +137,103 @@ class GHArchiveSampler(BaseSampler):
             day_str = target_date.strftime('%Y-%m-%d')
             self.logger.info(f"Processing day {i+1}/{days_to_sample}: {day_str}")
             
-            # Process all 24 hours of the day
             day_repos = {}
             day_events_processed = 0
             day_events_skipped = 0
             day_events_error = 0
             day_process_start = time.time()
             
-            for hour in range(24):
-                # Format the date for the archive URL: YYYY-MM-DD-H
-                archive_date = target_date.replace(hour=hour).strftime('%Y-%m-%d-%-H')
+            # Download full day's archive
+            try:
+                # Download the entire day's archive (consolidated file)
+                archive_date = target_date.strftime('%Y-%m-%d')
                 archive_url = f"https://data.gharchive.org/{archive_date}.json.gz"
                 
-                self.logger.debug(f"Processing hour {hour} archive: {archive_url}")
-                
-                try:
-                    # Download the archive
-                    response = requests.get(archive_url, stream=True, timeout=30)
-                    if response.status_code != 200:
-                        self.logger.warning(f"Failed to download archive {archive_url}: HTTP {response.status_code}")
-                        continue
-                    
-                    # Process the archive
-                    events_processed = 0
-                    
-                    # Decompress and process line by line
-                    with gzip.GzipFile(fileobj=response.raw) as f:
-                        for line in f:
-                            try:
-                                event = json.loads(line.decode('utf-8'))
-                                events_processed += 1
-                                day_events_processed += 1
-                                
-                                # Only process specified event types
-                                if event.get('type') not in event_types:
-                                    day_events_skipped += 1
-                                    continue
-                                
-                                # Extract repo information
-                                repo = event.get('repo', {})
-                                repo_name = repo.get('name')
-                                
-                                # Skip if no valid repo name
-                                if not repo_name or '/' not in repo_name:
-                                    day_events_skipped += 1
-                                    continue
-                                
-                                # Skip if we already have this repo from this day
-                                if repo_name in day_repos:
-                                    day_events_skipped += 1
-                                    continue
-                                
-                                # Get additional repo information
-                                owner, name = repo_name.split('/', 1)
-                                
-                                repo_data = {
-                                    'full_name': repo_name,
-                                    'name': name,
-                                    'owner': owner,
-                                    'html_url': repo.get('url') or f"https://github.com/{repo_name}",
-                                    'created_at': event.get('created_at'),
-                                    'sampled_from': day_str,  # Store day instead of hour
-                                    'event_type': event.get('type')
-                                }
-                                
-                                # Store repo in our day collection
-                                day_repos[repo_name] = repo_data
-                                                                
-                                # Break if we have enough repos for this day
-                                if len(day_repos) >= repos_per_day:
-                                    self.logger.debug(f"Reached target of {repos_per_day} repositories for this day")
-                                    break
-                                    
-                            except json.JSONDecodeError:
-                                day_events_error += 1
-                                continue  # Skip invalid JSON lines
-                            except Exception as e:
-                                day_events_error += 1
-                                self.logger.warning(f"Error processing event: {e}")
-                                continue
-                    
-                    # If we have enough repos for this day, stop processing hours
-                    if len(day_repos) >= repos_per_day:
-                        break
-                    
-                except Exception as e:
-                    self.logger.warning(f"Error processing hour {hour} archive: {e}")
+                response = requests.get(archive_url, stream=True, timeout=30)
+                if response.status_code != 200:
+                    self.logger.warning(f"Failed to download archive {archive_url}: HTTP {response.status_code}")
+                    errors += 1
                     continue
-            
-            # Add repos from this day to our overall collection
-            for repo_name, repo_data in day_repos.items():
-                all_repos[repo_name] = repo_data
                 
-            day_process_time = time.time() - day_process_start
-            
-            if day_repos:
+                # Process the archive
+                with gzip.GzipFile(fileobj=response.raw) as f:
+                    for line in f:
+                        try:
+                            event = json.loads(line.decode('utf-8'))
+                            day_events_processed += 1
+                            
+                            # Only process specified event types
+                            if event.get('type') not in event_types:
+                                day_events_skipped += 1
+                                continue
+                            
+                            # Extract repo information
+                            repo = event.get('repo', {})
+                            repo_name = repo.get('name')
+                            
+                            # Skip if no valid repo name
+                            if not repo_name or '/' not in repo_name:
+                                day_events_skipped += 1
+                                continue
+                            
+                            # Skip if we already have this repo
+                            if repo_name in day_repos:
+                                day_events_skipped += 1
+                                continue
+                            
+                            # Get additional repo information
+                            owner, name = repo_name.split('/', 1)
+                            
+                            repo_data = {
+                                'full_name': repo_name,
+                                'name': name,
+                                'owner': owner,
+                                'html_url': repo.get('url') or f"https://github.com/{repo_name}",
+                                'created_at': event.get('created_at'),
+                                'sampled_from': day_str,
+                                'event_type': event.get('type')
+                            }
+                            
+                            # Store repo in our day collection
+                            day_repos[repo_name] = repo_data
+                            
+                        except json.JSONDecodeError:
+                            day_events_error += 1
+                            continue
+                        except Exception as e:
+                            day_events_error += 1
+                            self.logger.warning(f"Error processing event: {e}")
+                            continue
+                
+                # Randomly sample repositories for this day
+                day_repos_list = list(day_repos.values())
+                random.shuffle(day_repos_list)
+                sampled_day_repos = day_repos_list[:repos_per_day]
+                
+                # Add sampled repos to overall collection
+                for repo_data in sampled_day_repos:
+                    all_repos[repo_data['full_name']] = repo_data
+                
+                day_process_time = time.time() - day_process_start
                 processed_days += 1
+                
                 self.logger.info(
-                    f"Found {len(day_repos)} repositories from {day_str} "
+                    f"Found {len(sampled_day_repos)} repositories from {day_str} "
                     f"(processed {day_events_processed} events in {day_process_time:.2f} seconds, "
                     f"skipped {day_events_skipped}, errors {day_events_error})"
                 )
-            else:
+                
+                # Log progress towards overall target
+                self.logger.info(f"Progress: {len(all_repos)}/{n_samples} repositories collected")
+                
+                # Break if we have enough repositories
+                if len(all_repos) >= n_samples:
+                    self.logger.info(f"Reached target sample size of {n_samples} repositories")
+                    break
+            
+            except Exception as e:
+                self.logger.warning(f"Error processing day {day_str}: {e}")
                 errors += 1
-                self.logger.warning(f"No repositories found for day {day_str}")
-            
-            # Log progress towards overall target
-            self.logger.info(f"Progress: {len(all_repos)}/{n_samples} repositories collected")
-            
-            # Break if we have enough repositories
-            if len(all_repos) >= n_samples:
-                self.logger.info(f"Reached target sample size of {n_samples} repositories")
-                break
         
         # Convert to list
         result_repos = list(all_repos.values())
