@@ -79,7 +79,7 @@ class GHArchiveSampler(BaseSampler):
         days_to_sample: int = 5,
         repos_per_day: int = 20,
         years_back: int = 10,
-        event_types: List[str] = ["CreateEvent", "PushEvent", "PullRequestEvent"],
+        event_types: List[str] = ["CreateEvent"],
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
@@ -163,9 +163,20 @@ class GHArchiveSampler(BaseSampler):
                             day_events_processed += 1
                             
                             # Only process specified event types
-                            if event.get('type') not in event_types:
+                            event_type = event.get('type')
+                            if event_type not in event_types:
                                 day_events_skipped += 1
                                 continue
+                            
+                            # Add an additional check to only record CreateEvent repositories
+                            # if CreateEvent is the ONLY type in event_types
+                            if len(event_types) == 1 and event_types[0] == 'CreateEvent':
+                                # For CreateEvent, we only want actual repository creation
+                                # This checks for repository create events specifically
+                                if not (event_type == 'CreateEvent' and 
+                                        event.get('payload', {}).get('ref_type') == 'repository'):
+                                    day_events_skipped += 1
+                                    continue
                             
                             # Extract repo information
                             repo = event.get('repo', {})
