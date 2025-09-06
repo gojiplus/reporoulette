@@ -43,7 +43,6 @@ class TemporalSampler(BaseSampler):
         # Configure logger
         self.logger = get_logger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
-            self.logger.addHandler(handler)
         
         # Set random seed if provided
         if seed is not None:
