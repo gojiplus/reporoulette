@@ -14,13 +14,15 @@ except ImportError:
 from .base import BaseSampler
 from .bq_utils import execute_query, filter_repos, format_timestamp_query
 
+
 class BigQuerySampler(BaseSampler):
     """
     Sample repositories using Google BigQuery's GitHub dataset.
-    
+
     This sampler leverages the public GitHub dataset in Google BigQuery to
     efficiently sample repositories with complex criteria and at scale.
     """
+
     def __init__(
         self,
         credentials_path: Optional[str] = None,
@@ -107,8 +109,9 @@ class BigQuerySampler(BaseSampler):
 
         -- Create a table of random dates to sample from
         CREATE TEMP TABLE random_dates AS (
-          SELECT 
-            FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL CAST(FLOOR(RAND() * (365 * years_back)) AS INT64) DAY)) AS day
+          SELECT
+            FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(),
+              INTERVAL CAST(FLOOR(RAND() * (365 * years_back)) AS INT64) DAY)) AS day
           FROM UNNEST(GENERATE_ARRAY(1, days_to_sample))
         );
 
@@ -141,9 +144,9 @@ class BigQuerySampler(BaseSampler):
         day = day_data.get('sample_day')
         repo_count = day_data.get('repo_count', 0)
         samples_to_take = day_data.get('samples_to_take', 1)
-        
+
         return f"""
-        -- Day {i+1}: {day} with {repo_count} repositories
+        -- Day {i + 1}: {day} with {repo_count} repositories
         SELECT DISTINCT
             event.repo_name AS full_name,
             SPLIT(event.repo_name, '/')[SAFE_OFFSET(1)] AS name,
@@ -313,10 +316,10 @@ class BigQuerySampler(BaseSampler):
                 repo AS full_name,
                 SPLIT(repo, '/')[OFFSET(1)] AS name,
                 SPLIT(repo, '/')[OFFSET(0)] AS owner
-            FROM 
+            FROM
                 `bigquery-public-data.github_repos.commits` c,
                 UNNEST(c.repo_name) AS repo
-            WHERE 
+            WHERE
                 TIMESTAMP_SECONDS(c.committer.time_sec) BETWEEN TIMESTAMP({created_after}) AND TIMESTAMP({created_before})
                 {("AND SPLIT(repo, '/')[OFFSET(0)] IN (" + lang_list + ")") if languages else ''}
         )
@@ -324,7 +327,7 @@ class BigQuerySampler(BaseSampler):
             full_name,
             name,
             owner
-        FROM 
+        FROM
             repo_set
         ORDER BY RAND({self._seed})
         LIMIT {n_samples}
@@ -345,19 +348,19 @@ class BigQuerySampler(BaseSampler):
         return self.results
 
     def sample(
-        self, 
+        self,
         n_samples: int = 100,
         population: str = "all",
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
         Sample repositories using BigQuery.
-        
+
         Args:
             n_samples: Number of repositories to sample
             population: Type of repository population to sample from ('all' or 'active')
             **kwargs: Additional filtering criteria
-            
+
         Returns:
             List of repository dictionaries
         """
@@ -387,23 +390,23 @@ class BigQuerySampler(BaseSampler):
         """
         self.logger.info(f"Fetching language information for {len(repos)} repositories")
         start_time = time.time()
-        
+
         repo_names = [repo['full_name'] for repo in repos if 'full_name' in repo]
         if not repo_names:
             self.logger.warning("No valid repository names found")
             return {}
-        
+
         # Process all repositories in a single query
         repo_list = ", ".join([f"'{repo}'" for repo in repo_names])
-        
+
         query = f"""
         SELECT
             repo_name,
             ARRAY_AGG(
                 STRUCT(
-                    lang.name AS language, 
+                    lang.name AS language,
                     lang.bytes AS bytes
-                ) 
+                )
                 ORDER BY lang.bytes DESC
             ) AS languages
         FROM
@@ -414,28 +417,27 @@ class BigQuerySampler(BaseSampler):
         GROUP BY
             repo_name
         """
-        
+
         query_start_time = time.time()
         results = self._execute_query(query)
         query_elapsed = time.time() - query_start_time
         self.logger.info(f"Query completed in {query_elapsed:.2f}s: found language data for {len(results)} repositories")
-        
+
         # Process results
         language_info = {}
         for result in results:
             repo_name = result.get('repo_name')
             if repo_name and 'languages' in result:
                 language_info[repo_name] = result['languages']
-        
+
         # Calculate stats
         repos_with_language = len(language_info)
-        total_languages = sum(len(langs) for langs in language_info.values())
         elapsed_time = time.time() - start_time
-        
+
         self.logger.info(
             f"Language query completed in {elapsed_time:.2f}s: found data for {repos_with_language}/{len(repos)} repos"
         )
-        
+
         # Generate language statistics if data was found
         if language_info:
             all_languages = []
@@ -443,13 +445,13 @@ class BigQuerySampler(BaseSampler):
                 for lang_entry in repo_langs:
                     if 'language' in lang_entry:
                         all_languages.append(lang_entry['language'])
-            
+
             language_counts = {}
             for lang in all_languages:
                 language_counts[lang] = language_counts.get(lang, 0) + 1
-            
+
             top_languages = sorted(language_counts.items(), key=lambda x: x[1], reverse=True)[:10]
             top_langs_str = ", ".join([f"{lang}: {count}" for lang, count in top_languages])
             self.logger.info(f"Top languages: {top_langs_str}")
-        
+
         return language_info

@@ -1,7 +1,7 @@
 # reporoulette/__init__.py
 import logging
 import os
-from typing import Optional, Dict, Any, Union, List
+from typing import Optional, Dict, Any
 
 from .samplers.id_sampler import IDSampler
 from .samplers.temporal_sampler import TemporalSampler
@@ -16,6 +16,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+
 def sample(
     method: str = 'temporal',
     n_samples: int = 50,
@@ -24,20 +25,20 @@ def sample(
 ) -> Dict[str, Any]:
     """
     Sample repositories using the specified method.
-    
+
     Args:
         method: Sampling method ('id', 'temporal', or 'bigquery')
         n_samples: Number of repositories to sample
         token: GitHub Personal Access Token (not used for BigQuery)
         **kwargs: Additional parameters specific to each sampler
-        
+
     Returns:
         Dictionary with sampling results and stats
     """
     # Use environment token if none provided
     if token is None:
         token = os.environ.get('GITHUB_TOKEN')
-        
+
     # Create the appropriate sampler
     if method.lower() == 'id':
         sampler = IDSampler(token=token)
@@ -46,10 +47,10 @@ def sample(
     elif method.lower() == 'archive':
         sampler = GHArchiveSampler()
     elif method.lower() == 'bigquery':
-        credentials_path = kwargs.pop('credentials_path', 
-                                     os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))
+        credentials_path = kwargs.pop('credentials_path',
+                                      os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'))
         project_id = kwargs.pop('project_id', None)
-        
+
         sampler = BigQuerySampler(
             credentials_path=credentials_path,
             project_id=project_id
@@ -57,10 +58,10 @@ def sample(
     else:
         logging.error(f"Unknown sampling method: {method}")
         return {"error": f"Unknown sampling method: {method}"}
-        
+
     # Sample repositories
     results = sampler.sample(n_samples=n_samples, **kwargs)
-    
+
     # Return results and stats
     return {
         'method': method,
@@ -69,6 +70,7 @@ def sample(
         'success_rate': sampler.success_rate,
         'samples': results
     }
+
 
 # Export samplers
 __all__ = ['IDSampler', 'TemporalSampler', 'BigQuerySampler', 'GHArchiveSampler', 'sample']
