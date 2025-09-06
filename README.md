@@ -45,7 +45,7 @@ print(f"Samples collected: {len(repos)}")
 
 ### 2. ⏱️ Temporal Sampling
 
-Randomly selects time points (date/hour combinations) within a specified range and then retrieves repositories updated during those periods. 
+Randomly selects days within a specified date range and retrieves repositories updated during those periods using weighted sampling based on repository activity. 
 
 ```python
 from reporoulette import TemporalSampler
@@ -69,7 +69,7 @@ repos = sampler.sample(n_samples=100)
 filtered_repos = sampler.sample(
     n_samples=50,
     min_stars=10,
-    languages=["python", "javascript"]
+    language="python"  # Note: single language, not list
 )
 ```
 
@@ -96,6 +96,7 @@ The `BigQuerySampler` leverages Google BigQuery's public GitHub dataset to sampl
 4. **Install required dependencies**:
    ```bash
    pip install google-cloud-bigquery google-auth
+   ```
 
 5. **Using BigQuerySampler**:
 

@@ -1,3 +1,17 @@
+"""
+RepoRoulette: Randomly Sample GitHub Repositories
+
+A Python library for randomly sampling GitHub repositories using multiple methods:
+- ID-based sampling: Probes random repository IDs
+- Temporal sampling: Weighted sampling based on repository activity by time period
+- BigQuery sampling: Advanced querying using Google BigQuery's GitHub dataset
+- GitHub Archive sampling: Event-based sampling from GitHub Archive files
+
+Example:
+    >>> from reporoulette import sample
+    >>> results = sample(method='temporal', n_samples=10)
+    >>> print(f"Found {len(results['samples'])} repositories")
+"""
 # reporoulette/__init__.py
 import logging
 import os
