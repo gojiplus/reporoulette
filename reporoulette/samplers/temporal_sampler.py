@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 import requests
 
 from .base import BaseSampler
+from ..logging_config import get_logger
 
 class TemporalSampler(BaseSampler):
     """
@@ -40,14 +41,8 @@ class TemporalSampler(BaseSampler):
         super().__init__(token)
         
         # Configure logger
-        self.logger = logging.getLogger(f"{self.__class__.__name__}")
+        self.logger = get_logger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
-        
-        # Add a handler if none exists
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
             self.logger.addHandler(handler)
         
         # Set random seed if provided

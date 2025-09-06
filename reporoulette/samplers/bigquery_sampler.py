@@ -70,7 +70,7 @@ class BigQuerySampler(BaseSampler):
         self.success_count = 0
         self.results = []
 
-    def _init_client(self):
+    def _init_client(self) -> None:
         """Initialize the BigQuery client."""
         try:
             if self.credentials_path:
@@ -85,7 +85,7 @@ class BigQuerySampler(BaseSampler):
             self.logger.error(f"Failed to initialize BigQuery client: {str(e)}")
             raise
 
-    def _execute_query(self, query: str) -> List[Dict]:
+    def _execute_query(self, query: str) -> List[Dict[str, Any]]:
         """
         Execute a BigQuery query using the utility function.
         """

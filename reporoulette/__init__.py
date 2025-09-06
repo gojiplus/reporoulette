@@ -20,7 +20,7 @@ def sample(
     method: str = 'temporal',
     n_samples: int = 50,
     token: Optional[str] = None,
-    **kwargs
+    **kwargs: Any
 ) -> Dict[str, Any]:
     """
     Sample repositories using the specified method.

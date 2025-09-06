@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 import requests
 
 from .base import BaseSampler
+from ..logging_config import get_logger
 
 class IDSampler(BaseSampler):
     """
@@ -38,16 +39,8 @@ class IDSampler(BaseSampler):
         super().__init__(token)
         
         # Configure logger
-        self.logger = logging.getLogger(f"{self.__class__.__name__}")
+        self.logger = get_logger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
-        
-        # Create console handler if not already present
-        if not self.logger.handlers:
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(log_level)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
         
         # Set random seed if provided
         if seed is not None:
@@ -61,7 +54,15 @@ class IDSampler(BaseSampler):
         self.logger.info(f"Initialized IDSampler with min_id={min_id}, max_id={max_id}")
     
     def _check_rate_limit(self, headers: Dict[str, str]) -> int:
-        """Check GitHub API rate limit and return remaining requests."""
+        """
+        Check GitHub API rate limit and return remaining requests.
+        
+        Args:
+            headers: HTTP headers containing authentication token
+            
+        Returns:
+            int: Number of remaining API requests, or 0 if check fails
+        """
         try:
             self.logger.debug("Checking GitHub API rate limit")
             response = requests.get("https://api.github.com/rate_limit", headers=headers)

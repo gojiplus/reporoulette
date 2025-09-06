@@ -7,11 +7,11 @@ class BaseSampler(ABC):
     """
     Base class for all repository samplers.
     """
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, token: Optional[str] = None) -> None:
         self.token = token
-        self.results = []
-        self.attempts = 0
-        self.success_count = 0
+        self.results: List[Dict[str, Any]] = []
+        self.attempts: int = 0
+        self.success_count: int = 0
         self.logger = logging.getLogger(__name__)
     
     @property
@@ -40,7 +40,7 @@ class BaseSampler(ABC):
         """
         pass
     
-    def _filter_repos(self, repos: List[Dict[str, Any]], **filters) -> List[Dict[str, Any]]:
+    def _filter_repos(self, repos: List[Dict[str, Any]], **filters: Any) -> List[Dict[str, Any]]:
         """
         Filter repositories based on criteria.
         

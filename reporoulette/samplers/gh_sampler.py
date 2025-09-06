@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from .base import BaseSampler
+from ..logging_config import get_logger
 
 class GHArchiveSampler(BaseSampler):
     """
@@ -30,16 +31,8 @@ class GHArchiveSampler(BaseSampler):
         super().__init__(token)
         
         # Configure logger
-        self.logger = logging.getLogger(f"{self.__class__.__name__}")
+        self.logger = get_logger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
-        
-        # Create console handler if not already present
-        if not self.logger.handlers:
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setLevel(log_level)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
         
         # Initialize state
         self._seed = seed
@@ -80,7 +73,7 @@ class GHArchiveSampler(BaseSampler):
         repos_per_day: int = 20,
         years_back: int = 10,
         event_types: List[str] = ["CreateEvent"],
-        **kwargs
+        **kwargs: Any
     ) -> List[Dict[str, Any]]:
         """
         Sample repositories by downloading and processing full day's GH Archive files.
@@ -287,7 +280,7 @@ class GHArchiveSampler(BaseSampler):
         
         return result
         
-    def _filter_repos(self, repos: List[Dict[str, Any]], **kwargs) -> List[Dict[str, Any]]:
+    def _filter_repos(self, repos: List[Dict[str, Any]], **kwargs: Any) -> List[Dict[str, Any]]:
         """
         Filter repositories based on criteria.
         
