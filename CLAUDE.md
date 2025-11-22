@@ -8,7 +8,7 @@ RepoRoulette is a Python library for randomly sampling GitHub repositories using
 
 ## Development Commands
 
-This project uses **uv** for dependency management and project workflows. Make sure you have uv installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+This project uses **uv** for dependency management and **uv_build** for the build backend - 2025's cutting-edge Python tooling. Make sure you have uv installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ### Installation and Setup
 ```bash
@@ -57,7 +57,7 @@ uv run ruff check --fix .
 
 ### Building and Distribution
 ```bash
-# Build the package (creates wheel and source distribution)
+# Build the package with uv_build backend (creates wheel and source distribution)
 uv build
 
 # Build specific formats
@@ -66,6 +66,19 @@ uv build --sdist      # Build source distribution only
 
 # Install from local build
 uv pip install dist/reporoulette-*.whl
+```
+
+### Build System
+This project uses the **uv_build** backend for ultra-fast builds (10-35x faster than setuptools). The flat package layout is configured in `pyproject.toml`:
+
+```toml
+[build-system]
+requires = ["uv_build>=0.9.11,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "reporoulette"
 ```
 
 ### Pre-commit Hooks

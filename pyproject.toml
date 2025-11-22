@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling>=1.18.0"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.9.11,<0.10.0"]
+build-backend = "uv_build"
 
 [project]
 name = "reporoulette"
@@ -179,3 +179,8 @@ package = true
 
 [tool.uv.sources]
 # Use index strategy for better performance
+
+[tool.uv.build-backend]
+# Configure uv_build to work with flat layout (not src/)
+module-root = ""
+module-name = "reporoulette"
