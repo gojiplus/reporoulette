@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    env:
+      ENCODED_GOOGLE_CREDENTIALS: ${{ secrets.ENCODED_GOOGLE_CREDENTIALS }}
+      GOOGLE_PROJECT_ID: in-electoral-rolls
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+        uv add google-cloud-bigquery db-dtypes --dev
+
+    - name: Lint with Ruff
+      run: |
+        # Check for syntax errors and undefined names
+        uv run ruff check --select=E9,F63,F7,F82 .
+        # Run full linting
+        uv run ruff check .
+
+    - name: Format check with Ruff
+      run: |
+        uv run ruff format --check .
+
+    - name: Test with pytest
+      run: |
+        uv run pytest --cov=reporoulette --cov-report=xml
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v4
+      if: matrix.python-version == '3.11'
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: false
