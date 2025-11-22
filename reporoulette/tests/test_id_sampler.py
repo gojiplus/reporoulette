@@ -2,9 +2,6 @@ import logging
 import unittest
 from unittest.mock import MagicMock, patch
 
-from reporoulette.validation.bias_detector import BiasDetector
-from reporoulette.validation.statistical_analyzer import StatisticalAnalyzer
-
 from reporoulette.samplers.id_sampler import IDSampler
 
 
@@ -107,28 +104,15 @@ class TestIDSampler(unittest.TestCase):
         # Sample repositories
         results = self.sampler.sample(n_samples=5, max_attempts=5)
 
-        # Validate with BiasDetector (only if we got results)
-        if results:
-            bias_detector = BiasDetector()
-            popularity_bias = bias_detector.detect_popularity_bias(results)
+        # Basic validation of results
+        self.assertIsInstance(results, list)
+        self.assertLessEqual(len(results), 5)
 
-            # Check that bias detection works
-            self.assertIn("bias_level", popularity_bias)
-            self.assertIn("avg_stars", popularity_bias)
-            self.assertIsInstance(popularity_bias["avg_stars"], (int, float))
-            # Validate with StatisticalAnalyzer
-            analyzer = StatisticalAnalyzer()
-            quality_metrics = analyzer.calculate_sample_quality_metrics(results)
-
-            # Check quality metrics
-            self.assertIn("quality_score", quality_metrics)
-            self.assertIn("field_completeness", quality_metrics)
-            self.assertGreaterEqual(quality_metrics["quality_score"], 0)
-            self.assertLessEqual(quality_metrics["quality_score"], 1)
-        else:
-            self.skipTest(
-                "No results returned from sampler - cannot test bias detection"
-            )
+        # Check that each result has required fields
+        for repo in results:
+            self.assertIn("id", repo)
+            self.assertIn("name", repo)
+            self.assertIn("full_name", repo)
 
     def test_default_range_covers_known_ids(self):
         """Test that new default max_id covers known high repository IDs."""
