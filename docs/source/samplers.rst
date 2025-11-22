@@ -11,7 +11,7 @@ ID-Based Sampling
    :undoc-members:
    :show-inheritance:
 
-The ID-based sampler uses GitHub's sequential repository ID system to generate truly random samples by probing random IDs from the valid ID range. 
+The ID-based sampler uses GitHub's sequential repository ID system to generate truly random samples by probing random IDs from the valid ID range.
 
 **Advantages:**
 - Truly random sampling across all public repositories

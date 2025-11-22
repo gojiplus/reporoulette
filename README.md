@@ -45,7 +45,7 @@ print(f"Samples collected: {len(repos)}")
 
 ### 2. ⏱️ Temporal Sampling
 
-Randomly selects days within a specified date range and retrieves repositories updated during those periods using weighted sampling based on repository activity. 
+Randomly selects days within a specified date range and retrieves repositories updated during those periods using weighted sampling based on repository activity.
 
 ```python
 from reporoulette import TemporalSampler

@@ -1,11 +1,10 @@
 import logging
-from typing import List, Dict, Any, Union
 from datetime import datetime
+from typing import Any
 
 
-def execute_query(client, query: str, logger: logging.Logger) -> List[Dict[str, Any]]:
-    """
-    Execute a BigQuery query and return results as a list of dictionaries.
+def execute_query(client, query: str, logger: logging.Logger) -> list[dict[str, Any]]:
+    """Execute a BigQuery query and return results as a list of dictionaries.
 
     Args:
         client: BigQuery client instance
@@ -25,9 +24,8 @@ def execute_query(client, query: str, logger: logging.Logger) -> List[Dict[str, 
         return []
 
 
-def filter_repos(repos: List[Dict[str, Any]], **filters: Any) -> List[Dict[str, Any]]:
-    """
-    Filter repositories based on provided criteria.
+def filter_repos(repos: list[dict[str, Any]], **filters: Any) -> list[dict[str, Any]]:
+    """Filter repositories based on provided criteria.
 
     Args:
         repos: List of repository dictionaries to filter
@@ -45,9 +43,8 @@ def filter_repos(repos: List[Dict[str, Any]], **filters: Any) -> List[Dict[str, 
     return filtered
 
 
-def format_timestamp_query(timestamp: Union[str, datetime]) -> str:
-    """
-    Format a timestamp (string or datetime) for use in a SQL query.
+def format_timestamp_query(timestamp: str | datetime) -> str:
+    """Format a timestamp (string or datetime) for use in a SQL query.
 
     Args:
         timestamp: Timestamp as string or datetime object

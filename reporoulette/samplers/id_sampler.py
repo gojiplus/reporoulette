@@ -1,18 +1,15 @@
 # reporoulette/samplers/id_sampler.py
+import logging
 import random
 import time
-import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-import requests
-
-from .base import BaseSampler
 from ..logging_config import get_logger
+from .base import HTTP_NOT_FOUND, HTTP_OK, BaseSampler
 
 
 class IDSampler(BaseSampler):
-    """
-    Sample repositories using random ID probing.
+    """Sample repositories using random ID probing.
 
     This sampler generates random repository IDs within a specified range
     and attempts to retrieve repositories with those IDs from GitHub.
@@ -20,23 +17,26 @@ class IDSampler(BaseSampler):
 
     def __init__(
         self,
-        token: Optional[str] = None,
+        token: str | None = None,
         min_id: int = 1,
-        max_id: int = 500000000,
+        max_id: int = 850000000,  # Updated from 500M based on validation testing
         rate_limit_safety: int = 100,
-        seed: Optional[int] = None,  # Add seed parameter
-        log_level: int = logging.INFO
+        seed: int | None = None,  # Add seed parameter
+        log_level: int = logging.INFO,
+        auto_discover_max: bool = False,
     ):
-        """
-        Initialize the ID sampler.
+        """Initialize the ID sampler.
 
         Args:
             token: GitHub Personal Access Token
             min_id: Minimum repository ID to sample from
-            max_id: Maximum repository ID to sample from
+            max_id: Maximum repository ID to sample from (default: 850M based on
+                    validation testing that found repositories at ID 800M+)
             rate_limit_safety: Stop when this many API requests remain
             seed: Random seed for reproducibility
             log_level: Logging level (default: logging.INFO)
+            auto_discover_max: Automatically discover current max repository ID
+                              (recommended for future-proof sampling)
         """
         super().__init__(token)
 
@@ -53,42 +53,106 @@ class IDSampler(BaseSampler):
         self.max_id = max_id
         self.rate_limit_safety = rate_limit_safety
 
-        self.logger.info(f"Initialized IDSampler with min_id={min_id}, max_id={max_id}")
+        # Auto-discover max ID if requested
+        if auto_discover_max:
+            discovered_max = self._discover_max_repository_id()
+            if discovered_max > 0:
+                self.max_id = discovered_max
+                self.logger.info(f"Auto-discovered max repository ID: {self.max_id}")
 
-    def _check_rate_limit(self, headers: Dict[str, str]) -> int:
-        """
-        Check GitHub API rate limit and return remaining requests.
+        self.logger.info(
+            f"Initialized IDSampler with min_id={min_id}, max_id={self.max_id}"
+        )
+
+    def _discover_max_repository_id(self, initial_guess: int = 800000000) -> int:
+        """Dynamically discover the current maximum repository ID using binary search.
 
         Args:
-            headers: HTTP headers containing authentication token
+            initial_guess: Starting point for the search
 
         Returns:
-            int: Number of remaining API requests, or 0 if check fails
+            Estimated maximum repository ID, or 0 if discovery fails
         """
-        try:
-            self.logger.debug("Checking GitHub API rate limit")
-            response = requests.get("https://api.github.com/rate_limit", headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                remaining = data['resources']['core']['remaining']
-                reset_time = data['resources']['core']['reset']
-                self.logger.debug(f"Rate limit status: {remaining} requests remaining, reset at timestamp {reset_time}")
-                return remaining
-            self.logger.warning(f"Failed to check rate limit. Status code: {response.status_code}")
-            return 0
-        except Exception as e:
-            self.logger.error(f"Error checking rate limit: {str(e)}")
-            return 0
+        self.logger.info("Starting dynamic repository ID range discovery...")
+
+        # Binary search for the maximum valid ID
+        low = 1
+        high = initial_guess
+        max_found = 0
+        attempts = 0
+        max_attempts = 30  # Limit search attempts
+
+        while low <= high and attempts < max_attempts:
+            mid = (low + high) // 2
+            attempts += 1
+
+            try:
+                url = f"{self.api_base_url}/repositories/{mid}"
+                response = self._make_github_request(url, min_wait=0.5, timeout=5)
+
+                if response is None:
+                    break  # Request failed or rate limited
+                elif response.status_code == HTTP_OK:
+                    # Repository exists, search higher
+                    max_found = max(max_found, mid)
+                    low = mid + 1
+                    self.logger.debug(
+                        f"Found repository at ID {mid}, searching higher..."
+                    )
+                elif response.status_code == HTTP_NOT_FOUND:
+                    # Repository doesn't exist, search lower
+                    high = mid - 1
+                    self.logger.debug(f"No repository at ID {mid}, searching lower...")
+                else:
+                    self.logger.warning(
+                        f"Unexpected status code {response.status_code} for ID {mid}"
+                    )
+
+            except Exception as e:
+                self.logger.error(f"Error discovering max ID: {str(e)}")
+                break
+
+        # Refine the estimate with a linear search near the boundary
+        if max_found > 0:
+            self.logger.info(f"Refining max ID estimate starting from {max_found}")
+
+            # Try a few IDs above the max found
+            for offset in range(1, 11):
+                test_id = max_found + offset * 100000
+                try:
+                    url = f"{self.api_base_url}/repositories/{test_id}"
+                    response = self._make_github_request(url, min_wait=0.5, timeout=5)
+
+                    if response is None:
+                        break  # Request failed or rate limited
+                    elif response.status_code == HTTP_OK:
+                        max_found = test_id
+                        self.logger.debug(f"Found higher repository at ID {test_id}")
+                    elif response.status_code == HTTP_NOT_FOUND:
+                        break
+
+                except Exception:
+                    break
+
+        if max_found > 0:
+            # Add some buffer for newly created repos
+            max_found = int(max_found * 1.05)
+            self.logger.info(
+                f"Discovered maximum repository ID: {max_found} (with 5% buffer)"
+            )
+        else:
+            self.logger.warning("Failed to discover maximum repository ID")
+
+        return max_found
 
     def sample(
         self,
         n_samples: int = 10,
         min_wait: float = 0.1,  # Add min_wait parameter
         max_attempts: int = 1000,  # Add max_attempts parameter
-        **kwargs
-    ) -> List[Dict[str, Any]]:
-        """
-        Sample repositories by trying random IDs.
+        **kwargs,
+    ) -> list[dict[str, Any]]:
+        """Sample repositories by trying random IDs.
 
         Args:
             n_samples: Number of valid repositories to collect
@@ -99,14 +163,16 @@ class IDSampler(BaseSampler):
         Returns:
             List of repository data
         """
-        self.logger.info(f"Starting sampling: target={n_samples}, max_attempts={max_attempts}")
+        self.logger.info(
+            f"Starting sampling: target={n_samples}, max_attempts={max_attempts}"
+        )
 
-        headers = {}
         if self.token:
             self.logger.info("Using GitHub API token for authentication")
-            headers['Authorization'] = f'token {self.token}'
         else:
-            self.logger.warning("No GitHub API token provided. Rate limits will be restricted.")
+            self.logger.warning(
+                "No GitHub API token provided. Rate limits will be restricted."
+            )
 
         valid_repos = []
         self.attempts = 0
@@ -126,7 +192,11 @@ class IDSampler(BaseSampler):
             if self.attempts > 0 and self.attempts % 10 == 0:
                 elapsed = time.time() - start_time
                 rate = self.attempts / elapsed if elapsed > 0 else 0
-                success_rate = (self.success_count / self.attempts) * 100 if self.attempts > 0 else 0
+                success_rate = (
+                    (self.success_count / self.attempts) * 100
+                    if self.attempts > 0
+                    else 0
+                )
                 self.logger.info(
                     f"Progress: {len(valid_repos)}/{n_samples} repos found, "
                     f"{self.attempts} attempts ({success_rate:.1f}% success rate), "
@@ -139,7 +209,7 @@ class IDSampler(BaseSampler):
             )
 
             if should_check_limit:
-                remaining = self._check_rate_limit(headers)
+                remaining = self._check_rate_limit()
                 if remaining <= self.rate_limit_safety:
                     self.logger.warning(
                         f"Approaching GitHub API rate limit ({remaining} remaining). "
@@ -152,13 +222,20 @@ class IDSampler(BaseSampler):
             self.logger.debug(f"Trying repository ID: {repo_id}")
 
             # Try to fetch the repository by ID
-            url = f"https://api.github.com/repositories/{repo_id}"
+            url = f"{self.api_base_url}/repositories/{repo_id}"
             try:
-                response = requests.get(url, headers=headers)
+                response = self._make_github_request(url, min_wait=min_wait, timeout=10)
                 self.attempts += 1
 
+                # Check if request succeeded
+                if response is None:
+                    self.logger.debug(
+                        f"Request failed or rate limited for ID {repo_id}"
+                    )
+                    continue
+
                 # Check if repository exists
-                if response.status_code == 200:
+                if response.status_code == HTTP_OK:
                     repo_data = response.json()
                     self.success_count += 1
 
@@ -170,55 +247,32 @@ class IDSampler(BaseSampler):
                         f"language={repo_data.get('language')}"
                     )
 
-                    valid_repos.append({
-                        'id': repo_id,
-                        'name': repo_data['name'],
-                        'full_name': repo_data['full_name'],
-                        'owner': repo_data['owner']['login'],
-                        'html_url': repo_data['html_url'],
-                        'description': repo_data.get('description'),
-                        'created_at': repo_data['created_at'],
-                        'updated_at': repo_data['updated_at'],
-                        'pushed_at': repo_data.get('pushed_at'),
-                        'stargazers_count': repo_data.get('stargazers_count', 0),
-                        'forks_count': repo_data.get('forks_count', 0),
-                        'language': repo_data.get('language'),
-                        'visibility': repo_data.get('visibility', 'unknown'),
-                    })
+                    valid_repos.append(
+                        {
+                            "id": repo_id,
+                            "name": repo_data["name"],
+                            "full_name": repo_data["full_name"],
+                            "owner": repo_data["owner"]["login"],
+                            "html_url": repo_data["html_url"],
+                            "description": repo_data.get("description"),
+                            "created_at": repo_data["created_at"],
+                            "updated_at": repo_data["updated_at"],
+                            "pushed_at": repo_data.get("pushed_at"),
+                            "stargazers_count": repo_data.get("stargazers_count", 0),
+                            "forks_count": repo_data.get("forks_count", 0),
+                            "language": repo_data.get("language"),
+                            "visibility": repo_data.get("visibility", "unknown"),
+                        }
+                    )
                     self.logger.info(
                         f"Found valid repository ({len(valid_repos)}/{n_samples}): "
                         f"{repo_data['full_name']} (id: {repo_id})"
                     )
-                elif response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
-                    # Handle rate limiting
-                    wait_time = 60  # Simple fallback
-                    try:
-                        # Try to get the reset time from headers
-                        if 'x-ratelimit-reset' in response.headers:
-                            reset_time = int(response.headers['x-ratelimit-reset'])
-                            current_time = time.time()
-                            wait_time = max(reset_time - current_time + 5, 10)
-                            self.logger.warning(
-                                f"Rate limit exceeded. Reset at {time.ctime(reset_time)}. "
-                                f"Waiting {wait_time:.1f} seconds..."
-                            )
-                    except Exception as e:
-                        self.logger.error(f"Error parsing rate limit headers: {str(e)}")
-
-                    self.logger.warning(f"Rate limit exceeded. Waiting {wait_time:.1f} seconds...")
-                    time.sleep(wait_time)
-                    # Don't count this as an attempt
-                    self.attempts -= 1
-                    continue
                 else:
                     self.logger.debug(
                         f"Invalid repository ID: {repo_id} "
                         f"(Status code: {response.status_code}, Response: {response.text[:100]}...)"
                     )
-
-                # Wait between requests with a small random jitter
-                wait_time = min_wait + random.uniform(0, min_wait * 0.5)
-                time.sleep(wait_time)
 
             except Exception as e:
                 self.logger.error(f"Error sampling repository ID {repo_id}: {str(e)}")
@@ -226,7 +280,9 @@ class IDSampler(BaseSampler):
 
         # Calculate final stats
         elapsed = time.time() - start_time
-        success_rate = (self.success_count / self.attempts) * 100 if self.attempts > 0 else 0
+        success_rate = (
+            (self.success_count / self.attempts) * 100 if self.attempts > 0 else 0
+        )
         rate = self.attempts / elapsed if elapsed > 0 else 0
 
         self.logger.info(

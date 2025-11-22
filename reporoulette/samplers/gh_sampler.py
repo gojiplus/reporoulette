@@ -1,28 +1,32 @@
 # reporoulette/samplers/gh_archive_sampler.py
+import gzip
+import json
 import logging
 import random
 import time
-import requests
-import gzip
-import json
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from .base import BaseSampler
+import requests
+
 from ..logging_config import get_logger
+from .base import HTTP_OK, BaseSampler
 
 
 class GHArchiveSampler(BaseSampler):
-    """
-    Sample repositories by downloading and processing GH Archive files.
+    """Sample repositories by downloading and processing GH Archive files.
 
     This sampler randomly selects days from GitHub's event history, downloads
     the corresponding archive files, and extracts repository information.
     """
 
-    def __init__(self, token: Optional[str] = None, seed: Optional[int] = None, log_level: int = logging.INFO):
-        """
-        Initialize the GH Archive sampler.
+    def __init__(
+        self,
+        token: str | None = None,
+        seed: int | None = None,
+        log_level: int = logging.INFO,
+    ):
+        """Initialize the GH Archive sampler.
 
         Args:
             token: GitHub Personal Access Token (not strictly needed for GH Archive)
@@ -48,9 +52,8 @@ class GHArchiveSampler(BaseSampler):
 
         self.logger.info("Initialized GHArchiveSampler")
 
-    def sample(self, n_samples: int = 100, **kwargs) -> List[Dict[str, Any]]:
-        """
-        Sample repositories using the GH Archive approach.
+    def sample(self, n_samples: int = 100, **kwargs) -> list[dict[str, Any]]:
+        """Sample repositories using the GH Archive approach.
 
         This is the implementation of the abstract method from BaseSampler,
         which delegates to the gh_sampler method with the provided parameters.
@@ -73,11 +76,10 @@ class GHArchiveSampler(BaseSampler):
         days_to_sample: int = 5,
         repos_per_day: int = 20,
         years_back: int = 10,
-        event_types: List[str] = ["CreateEvent"],
-        **kwargs: Any
-    ) -> List[Dict[str, Any]]:
-        """
-        Sample repositories by downloading and processing full day's GH Archive files.
+        event_types: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """Sample repositories by downloading and processing full day's GH Archive files.
 
         Args:
             n_samples: Target number of repositories to sample
@@ -96,6 +98,10 @@ class GHArchiveSampler(BaseSampler):
             f"event_types={event_types}"
         )
 
+        # Set default event types if None provided
+        if event_types is None:
+            event_types = ["CreateEvent"]
+
         # Log filter criteria if any
         if kwargs:
             self.logger.info(f"Filter criteria: {kwargs}")
@@ -105,7 +111,9 @@ class GHArchiveSampler(BaseSampler):
         # Calculate parameters to ensure we get enough samples
         days_needed = max(1, (n_samples + repos_per_day - 1) // repos_per_day)
         days_to_sample = max(days_to_sample, days_needed)
-        self.logger.debug(f"Adjusted days_to_sample to {days_to_sample} to ensure enough data")
+        self.logger.debug(
+            f"Adjusted days_to_sample to {days_to_sample} to ensure enough data"
+        )
 
         # Generate random days
         random_days = []
@@ -128,7 +136,7 @@ class GHArchiveSampler(BaseSampler):
 
         for i, target_date in enumerate(random_days):
             # Format the date string for logging
-            day_str = target_date.strftime('%Y-%m-%d')
+            day_str = target_date.strftime("%Y-%m-%d")
             self.logger.info(f"Processing day {i + 1}/{days_to_sample}: {day_str}")
 
             day_repos = {}
@@ -140,12 +148,14 @@ class GHArchiveSampler(BaseSampler):
             # Download full day's archive
             try:
                 # Download the entire day's archive (consolidated file)
-                archive_date = target_date.strftime('%Y-%m-%d')
+                archive_date = target_date.strftime("%Y-%m-%d")
                 archive_url = f"https://data.gharchive.org/{archive_date}.json.gz"
 
                 response = requests.get(archive_url, stream=True, timeout=30)
-                if response.status_code != 200:
-                    self.logger.warning(f"Failed to download archive {archive_url}: HTTP {response.status_code}")
+                if response.status_code != HTTP_OK:
+                    self.logger.warning(
+                        f"Failed to download archive {archive_url}: HTTP {response.status_code}"
+                    )
                     errors += 1
                     continue
 
@@ -153,31 +163,37 @@ class GHArchiveSampler(BaseSampler):
                 with gzip.GzipFile(fileobj=response.raw) as f:
                     for line in f:
                         try:
-                            event = json.loads(line.decode('utf-8'))
+                            event = json.loads(line.decode("utf-8"))
                             day_events_processed += 1
 
                             # Only process specified event types
-                            event_type = event.get('type')
+                            event_type = event.get("type")
                             if event_type not in event_types:
                                 day_events_skipped += 1
                                 continue
 
                             # Add an additional check to only record CreateEvent repositories
                             # if CreateEvent is the ONLY type in event_types
-                            if len(event_types) == 1 and event_types[0] == 'CreateEvent':
+                            if (
+                                len(event_types) == 1
+                                and event_types[0] == "CreateEvent"
+                            ):
                                 # For CreateEvent, we only want actual repository creation
                                 # This checks for repository create events specifically
-                                if not (event_type == 'CreateEvent' and
-                                        event.get('payload', {}).get('ref_type') == 'repository'):
+                                if not (
+                                    event_type == "CreateEvent"
+                                    and event.get("payload", {}).get("ref_type")
+                                    == "repository"
+                                ):
                                     day_events_skipped += 1
                                     continue
 
                             # Extract repo information
-                            repo = event.get('repo', {})
-                            repo_name = repo.get('name')
+                            repo = event.get("repo", {})
+                            repo_name = repo.get("name")
 
                             # Skip if no valid repo name
-                            if not repo_name or '/' not in repo_name:
+                            if not repo_name or "/" not in repo_name:
                                 day_events_skipped += 1
                                 continue
 
@@ -187,16 +203,17 @@ class GHArchiveSampler(BaseSampler):
                                 continue
 
                             # Get additional repo information
-                            owner, name = repo_name.split('/', 1)
+                            owner, name = repo_name.split("/", 1)
 
                             repo_data = {
-                                'full_name': repo_name,
-                                'name': name,
-                                'owner': owner,
-                                'html_url': repo.get('url') or f"https://github.com/{repo_name}",
-                                'created_at': event.get('created_at'),
-                                'sampled_from': day_str,
-                                'event_type': event.get('type')
+                                "full_name": repo_name,
+                                "name": name,
+                                "owner": owner,
+                                "html_url": repo.get("url")
+                                or f"https://github.com/{repo_name}",
+                                "created_at": event.get("created_at"),
+                                "sampled_from": day_str,
+                                "event_type": event.get("type"),
                             }
 
                             # Store repo in our day collection
@@ -217,7 +234,7 @@ class GHArchiveSampler(BaseSampler):
 
                 # Add sampled repos to overall collection
                 for repo_data in sampled_day_repos:
-                    all_repos[repo_data['full_name']] = repo_data
+                    all_repos[repo_data["full_name"]] = repo_data
 
                 day_process_time = time.time() - day_process_start
                 processed_days += 1
@@ -229,11 +246,15 @@ class GHArchiveSampler(BaseSampler):
                 )
 
                 # Log progress towards overall target
-                self.logger.info(f"Progress: {len(all_repos)}/{n_samples} repositories collected")
+                self.logger.info(
+                    f"Progress: {len(all_repos)}/{n_samples} repositories collected"
+                )
 
                 # Break if we have enough repositories
                 if len(all_repos) >= n_samples:
-                    self.logger.info(f"Reached target sample size of {n_samples} repositories")
+                    self.logger.info(
+                        f"Reached target sample size of {n_samples} repositories"
+                    )
                     break
 
             except Exception as e:
@@ -281,9 +302,10 @@ class GHArchiveSampler(BaseSampler):
 
         return result
 
-    def _filter_repos(self, repos: List[Dict[str, Any]], **kwargs: Any) -> List[Dict[str, Any]]:
-        """
-        Filter repositories based on criteria.
+    def _filter_repos(
+        self, repos: list[dict[str, Any]], **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Filter repositories based on criteria.
 
         Args:
             repos: List of repository data
@@ -296,15 +318,21 @@ class GHArchiveSampler(BaseSampler):
         filtered = repos
 
         # Example: filter by owner
-        if 'owner' in kwargs:
-            owner = kwargs['owner']
-            filtered = [r for r in filtered if r['owner'] == owner]
-            self.logger.debug(f"Filtered by owner '{owner}': {len(filtered)} repos remaining")
+        if "owner" in kwargs:
+            owner = kwargs["owner"]
+            filtered = [r for r in filtered if r["owner"] == owner]
+            self.logger.debug(
+                f"Filtered by owner '{owner}': {len(filtered)} repos remaining"
+            )
 
         # Example: filter by min stars (if available)
-        if 'min_stars' in kwargs and any('stargazers_count' in r for r in repos):
-            min_stars = int(kwargs['min_stars'])
-            filtered = [r for r in filtered if r.get('stargazers_count', 0) >= min_stars]
-            self.logger.debug(f"Filtered by min_stars {min_stars}: {len(filtered)} repos remaining")
+        if "min_stars" in kwargs and any("stargazers_count" in r for r in repos):
+            min_stars = int(kwargs["min_stars"])
+            filtered = [
+                r for r in filtered if r.get("stargazers_count", 0) >= min_stars
+            ]
+            self.logger.debug(
+                f"Filtered by min_stars {min_stars}: {len(filtered)} repos remaining"
+            )
 
         return filtered

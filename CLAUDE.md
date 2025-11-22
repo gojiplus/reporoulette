@@ -8,50 +8,76 @@ RepoRoulette is a Python library for randomly sampling GitHub repositories using
 
 ## Development Commands
 
+This project uses **uv** for dependency management and project workflows. Make sure you have uv installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+### Installation and Setup
+```bash
+# Install all dependencies (including dev, docs, and bigquery extras)
+uv sync --all-extras --group dev
+
+# Install specific extras only
+uv sync --extra bigquery          # For BigQuery sampler
+uv sync --extra docs              # For documentation
+uv sync --group dev               # For development tools
+
+# Install and run without syncing
+uv run --extra bigquery python -c "import reporoulette"
+```
+
 ### Testing
 ```bash
 # Run all tests
-pytest
+uv run pytest
 
 # Run specific test file
-pytest reporoulette/tests/test_id_sampler.py
-pytest reporoulette/tests/test_gharchive_sampler.py
-pytest reporoulette/tests/test_bq_sampler.py
-pytest reporoulette/tests/test_temporal_sampler.py
+uv run pytest reporoulette/tests/test_id_sampler.py
+uv run pytest reporoulette/tests/test_gharchive_sampler.py
+uv run pytest reporoulette/tests/test_bq_sampler.py
+uv run pytest reporoulette/tests/test_temporal_sampler.py
 
 # Run tests with coverage
-pytest --cov=reporoulette
+uv run pytest --cov=reporoulette --cov-report=xml
 ```
 
-### Linting
+### Linting and Formatting
 ```bash
-# Run flake8 linting (used in CI)
-flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+# Run Ruff linting (used in CI)
+uv run ruff check --select=E9,F63,F7,F82 .  # Critical errors only
+uv run ruff check .                         # Full linting
 
-# Run with development dependencies (if available)
-black reporoulette/  # Code formatting
-isort reporoulette/  # Import sorting
-```
+# Format code
+uv run ruff format .
 
-### Installation
-```bash
-# Install in development mode
-pip install -e .
+# Check formatting without changes
+uv run ruff format --check .
 
-# Install with optional dependencies
-pip install -e .[bigquery]  # For BigQuery sampler
-pip install -e .[dev]       # For development tools
-pip install -e .[docs]      # For documentation
+# Auto-fix linting issues
+uv run ruff check --fix .
 ```
 
 ### Building and Distribution
 ```bash
-# Build the package
-python -m build
+# Build the package (creates wheel and source distribution)
+uv build
 
-# Install dependencies for testing
-pip install flake8 pytest google-cloud-bigquery db-dtypes
+# Build specific formats
+uv build --wheel      # Build wheel only
+uv build --sdist      # Build source distribution only
+
+# Install from local build
+uv pip install dist/reporoulette-*.whl
+```
+
+### Pre-commit Hooks
+```bash
+# Install pre-commit hooks (run once)
+uv run pre-commit install
+
+# Run pre-commit on all files
+uv run pre-commit run --all-files
+
+# Update pre-commit hooks
+uv run pre-commit autoupdate
 ```
 
 ## Architecture
@@ -78,7 +104,8 @@ pip install flake8 pytest google-cloud-bigquery db-dtypes
 ### Dependencies
 - **Core**: `requests` for HTTP operations
 - **Optional**: `google-cloud-bigquery`, `google-auth` for BigQuery functionality
-- **Development**: `pytest`, `black`, `isort`, `flake8` for testing and code quality
+- **Development**: `pytest`, `pytest-cov`, `ruff`, `pre-commit` for testing and code quality
+- **Documentation**: `sphinx`, `furo`, `myst-parser` for building docs
 
 ### Configuration
 - GitHub tokens via `GITHUB_TOKEN` environment variable
