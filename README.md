@@ -5,7 +5,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![License](https://img.shields.io/pypi/l/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![Downloads](https://static.pepy.tech/badge/reporoulette)](https://pepy.tech/project/reporoulette)
-[![Python application](https://github.com/gojiplus/reporoulette/actions/workflows/python-app.yml/badge.svg)](https://github.com/gojiplus/reporoulette/actions/workflows/python-app.yml)
+[![CI](https://github.com/gojiplus/reporoulette/actions/workflows/ci.yml/badge.svg)](https://github.com/gojiplus/reporoulette/actions/workflows/ci.yml)
 
 ## 🚀 Installation
 

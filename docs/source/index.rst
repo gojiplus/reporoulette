@@ -33,7 +33,11 @@ Quick Start
    :maxdepth: 2
    :caption: Contents:
 
-   samplers
+   sample_function
+   id_sampler
+   temporal_sampler
+   bigquery_sampler
+   gh_sampler
 
 Indices and tables
 ==================

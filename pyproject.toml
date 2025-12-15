@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "reporoulette"
-version = "0.2.0"
+version = "0.3.0"
 description = "Random sampling of GitHub repositories using multiple methods"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -57,9 +57,7 @@ dev = [
     "ruff>=0.8.0",
     "pre-commit>=3.0.0",
 ]
-all = [
-    "reporoulette[bigquery,docs,dev]"
-]
+all = []  # Install with: pip install reporoulette[bigquery,docs,dev]
 
 [project.urls]
 "Homepage" = "https://github.com/gojiplus/reporoulette"
@@ -72,8 +70,8 @@ all = [
 project = "reporoulette"
 author = "Gaurav Sood"
 copyright = "2025, Gaurav Sood"
-version = "0.2.0"
-release = "0.2.0"
+version = "0.3.0"
+release = "0.3.0"
 language = "en"
 extensions = [
     "sphinx.ext.autodoc",
@@ -114,7 +112,7 @@ level = "WARNING"
 handlers = ["console"]
 
 [tool.pytest.ini_options]
-testpaths = ["reporoulette/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -155,7 +153,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402", "F401", "F403", "F811"]
-"reporoulette/tests/*" = ["D", "PLR2004", "PLC0415"]  # Disable docstring, magic number, and import location checks for tests
+"tests/*" = ["D", "PLR2004", "PLC0415"]  # Disable docstring, magic number, and import location checks for tests
 "reporoulette/samplers/*" = ["PLR0912", "PLR0913", "PLR0915"]  # Allow complex samplers
 
 [tool.ruff.lint.pydocstyle]
@@ -184,3 +182,9 @@ package = true
 # Configure uv_build to work with flat layout (not src/)
 module-root = ""
 module-name = "reporoulette"
+
+[tool.deptry]
+pep621_dev_dependency_groups = ["dev", "docs"]
+
+[tool.deptry.per_rule_ignores]
+DEP004 = ["google"]  # Google Cloud is an optional dependency with try/except imports
