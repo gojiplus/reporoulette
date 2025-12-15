@@ -2,11 +2,14 @@ import base64
 import logging
 import os
 import unittest
+from pathlib import Path
 
 from reporoulette.samplers.bigquery_sampler import BigQuerySampler
 
 
 class TestBigQuerySampler(unittest.TestCase):
+    logger = logging.getLogger(__name__)
+
     @classmethod
     def setUpClass(cls):
         """Set up credentials for all tests - handles multiple credential options."""
@@ -20,7 +23,7 @@ class TestBigQuerySampler(unittest.TestCase):
         json_credentials = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 
         # Logic to determine which credentials to use
-        if credentials_path and os.path.exists(credentials_path):
+        if credentials_path and Path(credentials_path).exists():
             cls.credentials_path = credentials_path
             cls.credentials_method = "file"
         elif encoded_credentials:
@@ -54,13 +57,13 @@ class TestBigQuerySampler(unittest.TestCase):
                 log_level=logging.INFO,
             )
             cls.credentials_available = True
-            print(f"Using credentials method: {cls.credentials_method}")
-            print(f"Using project ID: {cls.project_id}")
+            cls.logger.info(f"Using credentials method: {cls.credentials_method}")
+            cls.logger.info(f"Using project ID: {cls.project_id}")
         except Exception as e:
             cls.credentials_available = False
             cls.sampler = None
-            print(f"BigQuery credentials not available: {e}")
-            print("BigQuery tests will be skipped")
+            cls.logger.warning(f"BigQuery credentials not available: {e}")
+            cls.logger.warning("BigQuery tests will be skipped")
 
     @classmethod
     def tearDownClass(cls):
@@ -70,9 +73,9 @@ class TestBigQuerySampler(unittest.TestCase):
             and cls.credentials_method in ["encoded", "json"]
             and hasattr(cls, "credentials_path")
             and cls.credentials_path
-            and os.path.exists(cls.credentials_path)
+            and Path(cls.credentials_path).exists()
         ):
-            os.remove(cls.credentials_path)
+            Path(cls.credentials_path).unlink()
 
     def test_initialization(self):
         """Test that sampler initializes correctly."""
