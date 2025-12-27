@@ -17,3 +17,19 @@ repos:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run pyright --level=error
+        language: system
+        files: \.py$
+        pass_filenames: false
+
+      - id: pydoclint
+        name: pydoclint
+        entry: uv run pydoclint
+        language: system
+        files: \.py$
+        exclude: ^tests/

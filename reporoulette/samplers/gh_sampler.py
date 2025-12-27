@@ -36,12 +36,12 @@ class GHArchiveSampler(BaseSampler):
         super().__init__(token)
 
         # Configure logger
-        self.logger = get_logger(f"{self.__class__.__name__}")
+        self.logger: logging.Logger = get_logger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
 
         # Initialize state
         self._seed = seed
-        self.attempts = 0
+        self.attempts: int = 0
         self.success_count = 0
         self.results = []
 
@@ -52,7 +52,7 @@ class GHArchiveSampler(BaseSampler):
 
         self.logger.info("Initialized GHArchiveSampler")
 
-    def sample(self, n_samples: int = 100, **kwargs) -> list[dict[str, Any]]:
+    def sample(self, n_samples: int = 100, **kwargs: Any) -> list[dict[str, Any]]:
         """Sample repositories using the GH Archive approach.
 
         This is the implementation of the abstract method from BaseSampler,
@@ -296,9 +296,9 @@ class GHArchiveSampler(BaseSampler):
                     f"{filtered_count_after} repositories remaining"
                 )
 
-        self.attempts = days_to_sample
-        self.success_count = processed_days
-        self.results = result
+        self.attempts: int = days_to_sample
+        self.success_count: int = processed_days
+        self.results: list[dict[str, Any]] = result
 
         return result
 

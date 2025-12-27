@@ -27,32 +27,32 @@ class BaseSampler(ABC):
         token: str | None = None,
         rate_limit_safety: int = DEFAULT_RATE_LIMIT_SAFETY,
     ) -> None:
-        self.token = token
-        self.rate_limit_safety = rate_limit_safety
+        self.token: str | None = token
+        self.rate_limit_safety: int = rate_limit_safety
         self.results: list[dict[str, Any]] = []
         self.attempts: int = 0
         self.success_count: int = 0
-        self.logger = logging.getLogger(__name__)
-        self.api_base_url = "https://api.github.com"
+        self.logger: logging.Logger = logging.getLogger(__name__)
+        self.api_base_url: str = "https://api.github.com"
 
         # Rate limiting configuration
-        self.min_request_interval = DEFAULT_MIN_REQUEST_INTERVAL
-        self.max_retries_on_rate_limit = DEFAULT_MAX_RETRIES
-        self.default_timeout = DEFAULT_TIMEOUT
+        self.min_request_interval: float = DEFAULT_MIN_REQUEST_INTERVAL
+        self.max_retries_on_rate_limit: int = DEFAULT_MAX_RETRIES
+        self.default_timeout: int = DEFAULT_TIMEOUT
 
     @property
     def success_rate(self) -> float:
         """Calculate the success rate of sampling attempts.
 
         Returns:
-            float: Percentage of successful attempts
+            Percentage of successful attempts
         """
         if self.attempts == 0:
             return 0.0
         return (self.success_count / self.attempts) * 100
 
     @abstractmethod
-    def sample(self, n_samples: int, **kwargs) -> list[dict[str, Any]]:
+    def sample(self, n_samples: int, **kwargs: Any) -> list[dict[str, Any]]:
         """Sample repositories according to the specific strategy.
 
         Args:

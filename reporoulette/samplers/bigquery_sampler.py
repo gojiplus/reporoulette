@@ -2,18 +2,30 @@ import logging
 import random
 import time
 from datetime import datetime, timedelta
-from typing import Any
-
-try:
-    from google.cloud import bigquery
-    from google.oauth2 import service_account
-
-    BIGQUERY_AVAILABLE = True
-except ImportError:
-    BIGQUERY_AVAILABLE = False
+from typing import TYPE_CHECKING, Any
 
 from .base import BaseSampler
 from .bq_utils import execute_query, filter_repos, format_timestamp_query
+
+if TYPE_CHECKING:
+    from google.cloud import (
+        bigquery,  # pyright: ignore[reportMissingImports,reportAttributeAccessIssue]
+    )
+    from google.oauth2 import service_account  # pyright: ignore[reportMissingImports]
+
+# Runtime imports with fallback
+bigquery = None
+service_account = None
+_bigquery_available = False
+try:
+    from google.cloud import bigquery  # type: ignore[import-untyped]
+    from google.oauth2 import service_account  # type: ignore[import-untyped]
+
+    _bigquery_available = True
+except ImportError:
+    pass
+
+BIGQUERY_AVAILABLE = _bigquery_available
 
 
 class BigQuerySampler(BaseSampler):
@@ -34,7 +46,7 @@ class BigQuerySampler(BaseSampler):
         super().__init__(token=None)  # GitHub token not used for BigQuery
 
         # Configure logger
-        self.logger = logging.getLogger(f"{self.__class__.__name__}")
+        self.logger: logging.Logger = logging.getLogger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
         if not self.logger.handlers:
             handler = logging.StreamHandler()
@@ -61,8 +73,9 @@ class BigQuerySampler(BaseSampler):
             self.logger.error(error_msg)
             raise ImportError(error_msg)
 
-        self.credentials_path = credentials_path
-        self.project_id = project_id
+        self.credentials_path: str | None = credentials_path
+        self.project_id: str | None = project_id
+        self.client: Any = None  # BigQuery client will be initialized in _init_client
 
         self.logger.info(
             f"Initializing BigQuery client (project_id: {project_id or 'default'})"
@@ -70,25 +83,34 @@ class BigQuerySampler(BaseSampler):
         self._init_client()
 
         # Initialize tracking variables
-        self.attempts = 0
-        self.success_count = 0
-        self.results = []
+        self.attempts: int = 0
+        self.success_count: int = 0
+        self.results: list[dict[str, Any]] = []
 
     def _init_client(self) -> None:
         """Initialize the BigQuery client."""
+        if not BIGQUERY_AVAILABLE:
+            raise ImportError("BigQuery dependencies are not available")
+
         try:
             if self.credentials_path:
                 self.logger.info(
                     f"Using service account credentials from: {self.credentials_path}"
                 )
+                if service_account is None:
+                    raise ImportError("google.oauth2.service_account is not available")
                 credentials = service_account.Credentials.from_service_account_file(
                     self.credentials_path
                 )
+                if bigquery is None:
+                    raise ImportError("google.cloud.bigquery is not available")
                 self.client = bigquery.Client(
                     credentials=credentials, project=self.project_id
                 )
             else:
                 self.logger.info("Using default credentials from environment")
+                if bigquery is None:
+                    raise ImportError("google.cloud.bigquery is not available")
                 self.client = bigquery.Client(project=self.project_id)
             self.logger.info(
                 f"BigQuery client initialized for project: {self.client.project}"
@@ -208,7 +230,7 @@ class BigQuerySampler(BaseSampler):
         days_to_sample: int = 10,
         repos_per_day: int = 50,
         years_back: int = 10,
-        **kwargs,
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Sample repositories using a day-based approach with GitHub Archive tables."""
         self.logger.info(
@@ -249,11 +271,11 @@ class BigQuerySampler(BaseSampler):
 
         final_query = self._combine_day_queries(day_queries, n_samples)
         valid_repos = self._execute_query(final_query)
-        self.results = valid_repos
+        self.results: list[dict[str, Any]] = valid_repos
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results = filter_repos(valid_repos, **kwargs)
+            self.results: list[dict[str, Any]] = filter_repos(valid_repos, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
@@ -291,7 +313,7 @@ class BigQuerySampler(BaseSampler):
         created_after: str | datetime | None = None,
         created_before: str | datetime | None = None,
         languages: list[str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Sample repositories with recent commit activity."""
         self.logger.info(
@@ -329,7 +351,7 @@ class BigQuerySampler(BaseSampler):
                 UNNEST(c.repo_name) AS repo
             WHERE
                 TIMESTAMP_SECONDS(c.committer.time_sec) BETWEEN TIMESTAMP({created_after}) AND TIMESTAMP({created_before})
-                {("AND SPLIT(repo, '/')[OFFSET(0)] IN (" + lang_list + ")") if languages else ""}
+                {("AND SPLIT(repo, '/')[OFFSET(0)] IN (" + (lang_list or "") + ")") if languages and lang_list else ""}
         )
         SELECT
             full_name,
@@ -341,11 +363,11 @@ class BigQuerySampler(BaseSampler):
         LIMIT {n_samples}
         """
         valid_repos = self._execute_query(query)
-        self.results = valid_repos
+        self.results: list[dict[str, Any]] = valid_repos
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results = filter_repos(valid_repos, **kwargs)
+            self.results: list[dict[str, Any]] = filter_repos(valid_repos, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
@@ -358,14 +380,14 @@ class BigQuerySampler(BaseSampler):
         return self.results
 
     def sample(
-        self, n_samples: int = 100, population: str = "all", **kwargs
+        self, n_samples: int = 100, population: str = "all", **kwargs: Any
     ) -> list[dict[str, Any]]:
         """Sample repositories using BigQuery.
 
         Args:
             n_samples: Number of repositories to sample
             population: Type of repository population to sample from ('all' or 'active')
-            **kwargs: Additional filtering criteria
+            **kwargs: Any: Additional filtering criteria
 
         Returns:
             List of repository dictionaries
@@ -375,8 +397,8 @@ class BigQuerySampler(BaseSampler):
         )
         start_time = time.time()
 
-        self.attempts = 0
-        self.success_count = 0
+        self.attempts: int = 0
+        self.success_count: int = 0
 
         if population == "active":
             self.logger.info("Targeting active repositories with recent commits")

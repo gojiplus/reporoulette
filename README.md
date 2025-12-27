@@ -3,6 +3,7 @@
 > Spin the wheel and see which GitHub repositories you get!
 
 [![PyPI version](https://img.shields.io/pypi/v/reporoulette.svg)](https://pypi.org/project/reporoulette/)
+[![Python](https://img.shields.io/pypi/pyversions/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![License](https://img.shields.io/pypi/l/reporoulette.svg)](https://pypi.org/project/reporoulette/)
 [![Downloads](https://static.pepy.tech/badge/reporoulette)](https://pepy.tech/project/reporoulette)
 [![CI](https://github.com/gojiplus/reporoulette/actions/workflows/ci.yml/badge.svg)](https://github.com/gojiplus/reporoulette/actions/workflows/ci.yml)

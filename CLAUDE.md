@@ -55,6 +55,18 @@ uv run ruff format --check .
 uv run ruff check --fix .
 ```
 
+### Type Checking and Docstring Linting
+```bash
+# Run pyright type checking
+uv run pyright
+
+# Run pydoclint for docstring validation (excludes tests)
+uv run pydoclint reporoulette/
+
+# Run both type checking and docstring linting
+uv run pyright && uv run pydoclint reporoulette/
+```
+
 ### Building and Distribution
 ```bash
 # Build the package with uv_build backend (creates wheel and source distribution)
