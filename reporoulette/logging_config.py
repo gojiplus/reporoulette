@@ -1,6 +1,5 @@
 # reporoulette/logging_config.py
 import logging
-import logging.config
 import sys
 
 

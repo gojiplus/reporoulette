@@ -3,7 +3,9 @@ from datetime import datetime
 from typing import Any
 
 
-def execute_query(client, query: str, logger: logging.Logger) -> list[dict[str, Any]]:
+def execute_query(
+    client: Any, query: str, logger: logging.Logger
+) -> list[dict[str, Any]]:
     """Execute a BigQuery query and return results as a list of dictionaries.
 
     Args:
@@ -12,7 +14,7 @@ def execute_query(client, query: str, logger: logging.Logger) -> list[dict[str, 
         logger: Logger instance for error reporting
 
     Returns:
-        List[Dict[str, Any]]: Query results as list of dictionaries, empty list on error
+        Query results as list of dictionaries, empty list on error
     """
     try:
         query_job = client.query(query)
@@ -32,7 +34,7 @@ def filter_repos(repos: list[dict[str, Any]], **filters: Any) -> list[dict[str, 
         **filters: Key-value pairs for filtering criteria
 
     Returns:
-        List[Dict[str, Any]]: Filtered list of repositories
+        Filtered list of repositories
 
     Note:
         This is a simple implementation that filters by exact matches.
@@ -50,7 +52,7 @@ def format_timestamp_query(timestamp: str | datetime) -> str:
         timestamp: Timestamp as string or datetime object
 
     Returns:
-        str: Formatted timestamp string for SQL queries
+        Formatted timestamp string for SQL queries
 
     Raises:
         ValueError: If timestamp is not a string or datetime object

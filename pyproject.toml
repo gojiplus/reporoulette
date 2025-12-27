@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "reporoulette"
-version = "0.3.0"
+version = "0.4.0"
 description = "Random sampling of GitHub repositories using multiple methods"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -170,6 +170,8 @@ dev = [
     "pytest-cov>=3.0.0",
     "ruff>=0.8.0",
     "pre-commit>=3.0.0",
+    "pyright>=1.1.390",
+    "pydoclint>=0.6.0",
 ]
 
 [tool.uv]
@@ -188,3 +190,70 @@ pep621_dev_dependency_groups = ["dev", "docs"]
 
 [tool.deptry.per_rule_ignores]
 DEP004 = ["google"]  # Google Cloud is an optional dependency with try/except imports
+
+[tool.pydoclint]
+style = "google"
+exclude = ".venv|build|dist|tests"
+require-return-section-when-returning-nothing = false
+arg-type-hints-in-docstring = false
+arg-type-hints-in-signature = true
+check-return-types = false
+check-yield-types = false
+allow-init-docstring = true
+skip-checking-raises = true
+
+[tool.pyright]
+include = ["reporoulette"]
+exclude = [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/node_modules",
+    "**/.venv",
+    "**/venv",
+    "build",
+    "dist",
+    "docs/_build"
+]
+ignore = ["tests"]
+pythonVersion = "3.11"
+pythonPlatform = "All"
+typeCheckingMode = "strict"
+useLibraryCodeForTypes = true
+reportMissingImports = "error"
+reportMissingTypeStubs = "warning"
+reportUndefinedVariable = "error"
+reportAssertAlwaysTrue = "error"
+reportInvalidStringEscapeSequence = "error"
+reportInvalidTypeVarUse = "error"
+reportSelfClsParameterName = "warning"
+reportUnsupportedDunderAll = "warning"
+reportUnusedExpression = "warning"
+reportWildcardImportFromLibrary = "warning"
+reportOptionalSubscript = "error"
+reportOptionalMemberAccess = "error"
+reportOptionalCall = "error"
+reportOptionalIterable = "error"
+reportOptionalContextManager = "error"
+reportOptionalOperand = "error"
+reportTypedDictNotRequiredAccess = "error"
+reportPrivateImportUsage = "error"
+reportUnknownArgumentType = "warning"
+reportUnknownLambdaType = "warning"
+reportUnknownVariableType = "warning"
+reportUnknownMemberType = "warning"
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+reportInvalidTypeForm = "error"
+reportUnnecessaryIsInstance = "warning"
+reportUnnecessaryCast = "warning"
+reportUnnecessaryComparison = "warning"
+reportUnnecessaryContains = "warning"
+reportImplicitStringConcatenation = "warning"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+reportCallInDefaultInitializer = "warning"
+reportUnnecessaryTypeIgnoreComment = "warning"
+reportImportCycles = "error"
+reportPropertyTypeMismatch = "error"

@@ -39,7 +39,7 @@ class TemporalSampler(BaseSampler):
         super().__init__(token)
 
         # Configure logger
-        self.logger = get_logger(f"{self.__class__.__name__}")
+        self.logger: logging.Logger = get_logger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
 
         # Set random seed if provided
@@ -52,7 +52,7 @@ class TemporalSampler(BaseSampler):
 
         # Default to current time for end_date if not specified
         if end_date is None:
-            self.end_date = datetime.now()
+            self.end_date: datetime = datetime.now()
         elif isinstance(end_date, str):
             self.end_date = datetime.fromisoformat(end_date)
         else:
@@ -60,7 +60,7 @@ class TemporalSampler(BaseSampler):
 
         # Use years_back parameter instead of fixed 90 days
         if start_date is None:
-            self.start_date = self.end_date - timedelta(days=365 * years_back)
+            self.start_date: datetime = self.end_date - timedelta(days=365 * years_back)
         elif isinstance(start_date, str):
             self.start_date = datetime.fromisoformat(start_date)
         else:
@@ -86,9 +86,9 @@ class TemporalSampler(BaseSampler):
         )
 
         # Initialize tracking variables
-        self.attempts = 0
-        self.success_count = 0
-        self.results = []
+        self.attempts: int = 0
+        self.success_count: int = 0
+        self.results: list[dict[str, Any]] = []
 
     def _random_date(self) -> datetime:
         """Generate a random date within the specified range.
@@ -130,7 +130,7 @@ class TemporalSampler(BaseSampler):
         min_stars: int = 0,
         min_size_kb: int = 0,
         language: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Build a search query string for the GitHub API.
 
@@ -174,7 +174,7 @@ class TemporalSampler(BaseSampler):
         min_stars: int = 0,
         min_size_kb: int = 0,
         language: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Sample repositories by randomly selecting days with weighting based on repo count.
 
@@ -207,8 +207,8 @@ class TemporalSampler(BaseSampler):
         # Initialize variables
         all_repos = []
         period_data = {}  # Maps periods to their repo counts and first page data
-        self.attempts = 0
-        self.success_count = 0
+        self.attempts: int = 0
+        self.success_count: int = 0
         start_time = time.time()
 
         # Generate random days for initial sampling
@@ -502,7 +502,7 @@ class TemporalSampler(BaseSampler):
 
         # Apply any additional filters
         filtered_count_before = len(all_repos)
-        self.results = self._filter_repos(all_repos, **kwargs)
+        self.results: list[dict[str, Any]] = self._filter_repos(all_repos, **kwargs)
         filtered_count_after = len(self.results)
 
         if filtered_count_before != filtered_count_after:
@@ -514,7 +514,7 @@ class TemporalSampler(BaseSampler):
         return self.results
 
     def _filter_repos(
-        self, repos: list[dict[str, Any]], **kwargs
+        self, repos: list[dict[str, Any]], **kwargs: Any
     ) -> list[dict[str, Any]]:
         """Apply additional filters to the list of repositories.
 
@@ -540,7 +540,7 @@ class TemporalSampler(BaseSampler):
             filtered_repos = [
                 repo
                 for repo in filtered_repos
-                if repo.get("language") and repo.get("language").lower() in languages
+                if (lang := repo.get("language")) and lang.lower() in languages
             ]
             self.logger.debug(
                 f"Filtered by languages {languages}: "
@@ -554,7 +554,7 @@ class TemporalSampler(BaseSampler):
             filtered_repos = [
                 repo
                 for repo in filtered_repos
-                if repo.get("language") and repo.get("language").lower() == language
+                if (lang := repo.get("language")) and lang.lower() == language
             ]
             self.logger.debug(
                 f"Filtered by language '{language}': "

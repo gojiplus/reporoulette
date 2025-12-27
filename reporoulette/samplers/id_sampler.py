@@ -41,7 +41,7 @@ class IDSampler(BaseSampler):
         super().__init__(token)
 
         # Configure logger
-        self.logger = get_logger(f"{self.__class__.__name__}")
+        self.logger: logging.Logger = get_logger(f"{self.__class__.__name__}")
         self.logger.setLevel(log_level)
 
         # Set random seed if provided
@@ -49,9 +49,9 @@ class IDSampler(BaseSampler):
             random.seed(seed)
             self.logger.info(f"Random seed set to: {seed}")
 
-        self.min_id = min_id
-        self.max_id = max_id
-        self.rate_limit_safety = rate_limit_safety
+        self.min_id: int = min_id
+        self.max_id: int = max_id
+        self.rate_limit_safety: int = rate_limit_safety
 
         # Auto-discover max ID if requested
         if auto_discover_max:
@@ -150,7 +150,7 @@ class IDSampler(BaseSampler):
         n_samples: int = 10,
         min_wait: float = 0.1,  # Add min_wait parameter
         max_attempts: int = 1000,  # Add max_attempts parameter
-        **kwargs,
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Sample repositories by trying random IDs.
 
@@ -174,9 +174,9 @@ class IDSampler(BaseSampler):
                 "No GitHub API token provided. Rate limits will be restricted."
             )
 
-        valid_repos = []
-        self.attempts = 0
-        self.success_count = 0
+        valid_repos: list[dict[str, Any]] = []
+        self.attempts: int = 0
+        self.success_count: int = 0
 
         # Log request rate/interval
         self.logger.info(f"Minimum wait between requests: {min_wait} seconds")
@@ -293,7 +293,7 @@ class IDSampler(BaseSampler):
 
         # Apply any filters
         filtered_count_before = len(valid_repos)
-        self.results = self._filter_repos(valid_repos, **kwargs)
+        self.results: list[dict[str, Any]] = self._filter_repos(valid_repos, **kwargs)
         filtered_count_after = len(self.results)
 
         if filtered_count_before != filtered_count_after:
