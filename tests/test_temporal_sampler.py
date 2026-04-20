@@ -56,9 +56,10 @@ class TestTemporalSampler(unittest.TestCase):
         self.assertEqual(result[0]["owner"], "test-owner")
         self.assertEqual(result[0]["language"], "Python")
 
-        # Verify attributes
-        self.assertEqual(self.sampler.attempts, 1)
-        self.assertEqual(self.sampler.success_count, 1)
+        # Verify attributes - with the page 1 bias fix, we need 2 requests:
+        # 1 for initial day assessment, 1 for weighted sampling
+        self.assertEqual(self.sampler.attempts, 2)
+        self.assertEqual(self.sampler.success_count, 2)
 
     @patch("requests.get")
     def test_temporal_sampler_empty_results(self, mock_get):

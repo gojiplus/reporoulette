@@ -108,8 +108,11 @@ class BaseSampler(ABC):
             headers["Authorization"] = f"token {self.token}"
         return headers
 
-    def _check_rate_limit(self) -> int:
+    def _check_rate_limit(self, resource: str = "core") -> int:
         """Check GitHub API rate limit and return remaining requests.
+
+        Args:
+            resource: Which rate limit resource to check ("core" or "search")
 
         Returns:
             Number of remaining API requests, or 0 if check fails
@@ -117,14 +120,14 @@ class BaseSampler(ABC):
         headers = self._get_headers()
 
         try:
-            self.logger.debug("Checking GitHub API rate limit")
+            self.logger.debug(f"Checking GitHub API rate limit for {resource}")
             response = requests.get(f"{self.api_base_url}/rate_limit", headers=headers)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                remaining = data["resources"]["core"]["remaining"]
-                reset_time = data["resources"]["core"]["reset"]
+                remaining = data["resources"][resource]["remaining"]
+                reset_time = data["resources"][resource]["reset"]
                 self.logger.debug(
-                    f"Rate limit status: {remaining} requests remaining, reset at timestamp {reset_time}"
+                    f"Rate limit status ({resource}): {remaining} requests remaining, reset at timestamp {reset_time}"
                 )
                 return remaining
             else:
