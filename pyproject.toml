@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "reporoulette"
-version = "0.4.0"
+version = "0.5.0"
 description = "Random sampling of GitHub repositories using multiple methods"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -70,8 +70,8 @@ all = []  # Install with: pip install reporoulette[bigquery,docs,dev]
 project = "reporoulette"
 author = "Gaurav Sood"
 copyright = "2025, Gaurav Sood"
-version = "0.4.0"
-release = "0.4.0"
+version = "0.5.0"
+release = "0.5.0"
 language = "en"
 extensions = [
     "sphinx.ext.autodoc",
