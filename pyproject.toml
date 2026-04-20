@@ -70,8 +70,8 @@ all = []  # Install with: pip install reporoulette[bigquery,docs,dev]
 project = "reporoulette"
 author = "Gaurav Sood"
 copyright = "2025, Gaurav Sood"
-version = "0.3.0"
-release = "0.3.0"
+version = "0.4.0"
+release = "0.4.0"
 language = "en"
 extensions = [
     "sphinx.ext.autodoc",
@@ -129,7 +129,7 @@ markers = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [

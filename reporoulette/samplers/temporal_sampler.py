@@ -226,7 +226,7 @@ class TemporalSampler(BaseSampler):
         for i, day in enumerate(initial_days):
             # Check rate limit periodically
             if i % 5 == 0:
-                remaining = self._check_rate_limit()
+                remaining = self._check_rate_limit("search")
                 if remaining <= self.rate_limit_safety:
                     self.logger.warning(
                         f"Approaching GitHub API rate limit ({remaining} remaining). "
@@ -264,47 +264,12 @@ class TemporalSampler(BaseSampler):
                         self.success_count += 1
                         self.logger.info(f"Found {count} repositories on {day_str}")
 
-                        # Store period data including count and first page results
+                        # Store period data for weighting only - do NOT add repos yet
+                        # to avoid page 1 bias (most recently updated repos)
                         period_data[day] = {
                             "count": count,
-                            "first_page": results["items"],
                             "day_str": day_str,
                         }
-
-                        # Process first page repos and add to collection
-                        period_repos = []
-                        for repo in results["items"]:
-                            # Skip repos we already have
-                            if any(
-                                r["full_name"] == repo["full_name"] for r in all_repos
-                            ):
-                                continue
-
-                            repo_data = {
-                                "id": repo["id"],
-                                "name": repo["name"],
-                                "full_name": repo["full_name"],
-                                "owner": repo["owner"]["login"],
-                                "html_url": repo["html_url"],
-                                "description": repo.get("description"),
-                                "created_at": repo["created_at"],
-                                "updated_at": repo["updated_at"],
-                                "pushed_at": repo.get("pushed_at"),
-                                "stargazers_count": repo.get("stargazers_count", 0),
-                                "forks_count": repo.get("forks_count", 0),
-                                "language": repo.get("language"),
-                                "visibility": repo.get("visibility", "public"),
-                                "size": repo.get("size", 0),  # Size in KB
-                                "sampled_from": day_str,  # Add the day this repo was sampled from
-                            }
-
-                            period_repos.append(repo_data)
-
-                        # Add first page repos to our collection
-                        all_repos.extend(period_repos)
-                        self.logger.info(
-                            f"Added {len(period_repos)} repositories from first page"
-                        )
                     else:
                         self.logger.info(f"No repositories found on {day_str}")
 
@@ -330,163 +295,157 @@ class TemporalSampler(BaseSampler):
             )
             return []
 
-        # Get enough repositories to meet our target
-        if len(all_repos) < n_samples:
-            # Step 3: Create probability distribution for weighted sampling
-            days = list(valid_days.keys())
-            weights = [valid_days[day] for day in days]
-            total_weight = sum(weights)
+        # Step 3: Create probability distribution for weighted sampling
+        days = list(valid_days.keys())
+        weights = [valid_days[day] for day in days]
+        total_weight = sum(weights)
 
-            # Normalize weights to get probabilities
-            probs = [weight / total_weight for weight in weights]
+        # Normalize weights to get probabilities
+        probs = [weight / total_weight for weight in weights]
 
+        self.logger.info(
+            f"Created weighted distribution across {len(days)} days "
+            f"(total weight: {total_weight})"
+        )
+
+        # Log the top days with highest weights
+        top_days = sorted(valid_days.items(), key=lambda x: x[1], reverse=True)[:5]
+        self.logger.info("Top 5 days by repository count:")
+        for day, count in top_days:
+            day_str = period_data[day]["day_str"]
+            self.logger.info(f"  {day_str}: {count} repositories")
+
+        # Step 4: Sample repositories from days based on weighted distribution
+        while len(all_repos) < n_samples:
+            # Check if we're approaching rate limit
+            if self.attempts % 5 == 0:
+                remaining = self._check_rate_limit("search")
+                if remaining <= self.rate_limit_safety:
+                    self.logger.warning(
+                        f"Approaching GitHub API rate limit ({remaining} remaining). "
+                        f"Stopping after collecting {len(all_repos)}/{n_samples} repositories."
+                    )
+                    break
+
+            # Select a day using weighted random choice
+            day = random.choices(days, weights=probs, k=1)[0]
+            day_info = period_data[day]
+            day_str = day_info["day_str"]
+            count = day_info["count"]
+
+            # Skip if we've already collected enough from this day
+            # (To avoid repeatedly sampling the same popular day)
+            if (
+                sum(1 for repo in all_repos if repo.get("sampled_from") == day_str)
+                >= count / 2
+            ):
+                continue
+
+            start_time_str, end_time_str = self._format_date_for_query(day)
+            self.attempts += 1
+
+            # Log the day we're querying
             self.logger.info(
-                f"Created weighted distribution across {len(days)} days "
-                f"(total weight: {total_weight})"
+                f"Sampling weighted day: {day_str} (weight: {count}) "
+                f"- collected {len(all_repos)}/{n_samples} repositories so far"
             )
 
-            # Log the top days with highest weights
-            top_days = sorted(valid_days.items(), key=lambda x: x[1], reverse=True)[:5]
-            self.logger.info("Top 5 days by repository count:")
-            for day, count in top_days:
-                day_str = period_data[day]["day_str"]
-                self.logger.info(f"  {day_str}: {count} repositories")
+            # Build query
+            query = self._build_search_query(
+                start_time_str,
+                end_time_str,
+                min_stars,
+                min_size_kb,
+                language,
+                **kwargs,
+            )
 
-            # Step 4: Sample additional repositories from days based on weighted distribution
-            while len(all_repos) < n_samples:
-                # Check if we're approaching rate limit
-                if self.attempts % 5 == 0:
-                    remaining = self._check_rate_limit()
-                    if remaining <= self.rate_limit_safety:
-                        self.logger.warning(
-                            f"Approaching GitHub API rate limit ({remaining} remaining). "
-                            f"Stopping after collecting {len(all_repos)}/{n_samples} repositories."
-                        )
-                        break
+            # For days with many repos, select a random page within the first N pages
+            max_page = min(10, (count // per_page) + 1)
+            page = random.randint(1, max_page)
 
-                # Select a day using weighted random choice
-                day = random.choices(days, weights=probs, k=1)[0]
-                day_info = period_data[day]
-                day_str = day_info["day_str"]
-                count = day_info["count"]
+            # Construct the URL
+            url = (
+                f"{self.api_base_url}/search/repositories?q={query}&sort=updated&"
+                f"order=desc&per_page={per_page}&page={page}"
+            )
 
-                # Skip if we've already collected enough from this day
-                # (To avoid repeatedly sampling the same popular day)
-                if (
-                    sum(1 for repo in all_repos if repo.get("sampled_from") == day_str)
-                    >= count / 2
-                ):
-                    continue
+            try:
+                query_start_time = time.time()
+                response = self._make_github_request(url, min_wait=min_wait, timeout=10)
+                query_elapsed = time.time() - query_start_time
 
-                start_time_str, end_time_str = self._format_date_for_query(day)
-                self.attempts += 1
-
-                # Log the day we're querying
-                self.logger.info(
-                    f"Sampling weighted day: {day_str} (weight: {count}) "
-                    f"- collected {len(all_repos)}/{n_samples} repositories so far"
-                )
-
-                # Build query
-                query = self._build_search_query(
-                    start_time_str,
-                    end_time_str,
-                    min_stars,
-                    min_size_kb,
-                    language,
-                    **kwargs,
-                )
-
-                # For days with many repos, select a random page within the first N pages
-                # Skip page 1 since we already have it
-                max_page = min(10, (count // per_page) + 1)
-                page = 1 if max_page <= 1 else random.randint(2, max_page)
-
-                # Construct the URL for additional page
-                url = (
-                    f"{self.api_base_url}/search/repositories?q={query}&sort=updated&"
-                    f"order=desc&per_page={per_page}&page={page}"
-                )
-
-                try:
-                    query_start_time = time.time()
-                    response = self._make_github_request(
-                        url, min_wait=min_wait, timeout=10
+                if response is None:
+                    self.logger.warning(
+                        f"Request failed or rate limited for day {day_str}"
                     )
-                    query_elapsed = time.time() - query_start_time
+                    continue
+                elif response.status_code == HTTP_OK:
+                    results = response.json()
 
-                    if response is None:
-                        self.logger.warning(
-                            f"Request failed or rate limited for day {day_str}"
+                    if results["total_count"] > 0:
+                        repos = results["items"]
+                        self.success_count += 1
+
+                        self.logger.info(
+                            f"Found {results['total_count']} repositories "
+                            f"(fetched {len(repos)} from page {page} in {query_elapsed:.2f} seconds)"
                         )
-                        continue
-                    elif response.status_code == HTTP_OK:
-                        results = response.json()
 
-                        if results["total_count"] > 0:
-                            repos = results["items"]
-                            self.success_count += 1
+                        # Process repos to match our standard format
+                        period_repos = []
+                        for repo in repos:
+                            # Skip repos we already have
+                            if any(
+                                r["full_name"] == repo["full_name"] for r in all_repos
+                            ):
+                                continue
 
+                            repo_data = {
+                                "id": repo["id"],
+                                "name": repo["name"],
+                                "full_name": repo["full_name"],
+                                "owner": repo["owner"]["login"],
+                                "html_url": repo["html_url"],
+                                "description": repo.get("description"),
+                                "created_at": repo["created_at"],
+                                "updated_at": repo["updated_at"],
+                                "pushed_at": repo.get("pushed_at"),
+                                "stargazers_count": repo.get("stargazers_count", 0),
+                                "forks_count": repo.get("forks_count", 0),
+                                "language": repo.get("language"),
+                                "visibility": repo.get("visibility", "public"),
+                                "size": repo.get("size", 0),
+                                "sampled_from": day_str,
+                            }
+
+                            period_repos.append(repo_data)
+
+                        # Add new repos from this period
+                        all_repos.extend(period_repos)
+                        added_count = len(period_repos)
+                        self.logger.info(
+                            f"Added {added_count} new repositories from this day"
+                        )
+
+                        # If we've added enough repos, we can stop
+                        if len(all_repos) >= n_samples:
                             self.logger.info(
-                                f"Found {results['total_count']} repositories "
-                                f"(fetched {len(repos)} from page {page} in {query_elapsed:.2f} seconds)"
+                                f"Reached target of {n_samples} repositories. Stopping sampling."
                             )
-
-                            # Process repos to match our standard format
-                            period_repos = []
-                            for repo in repos:
-                                # Skip repos we already have
-                                if any(
-                                    r["full_name"] == repo["full_name"]
-                                    for r in all_repos
-                                ):
-                                    continue
-
-                                repo_data = {
-                                    "id": repo["id"],
-                                    "name": repo["name"],
-                                    "full_name": repo["full_name"],
-                                    "owner": repo["owner"]["login"],
-                                    "html_url": repo["html_url"],
-                                    "description": repo.get("description"),
-                                    "created_at": repo["created_at"],
-                                    "updated_at": repo["updated_at"],
-                                    "pushed_at": repo.get("pushed_at"),
-                                    "stargazers_count": repo.get("stargazers_count", 0),
-                                    "forks_count": repo.get("forks_count", 0),
-                                    "language": repo.get("language"),
-                                    "visibility": repo.get("visibility", "public"),
-                                    "size": repo.get("size", 0),  # Size in KB
-                                    "sampled_from": day_str,  # Add the day this repo was sampled from
-                                }
-
-                                period_repos.append(repo_data)
-
-                            # Add new repos from this period
-                            all_repos.extend(period_repos)
-                            added_count = len(period_repos)
-                            self.logger.info(
-                                f"Added {added_count} new repositories from this day"
-                            )
-
-                            # If we've added enough repos, we can stop
-                            if len(all_repos) >= n_samples:
-                                self.logger.info(
-                                    f"Reached target of {n_samples} repositories. Stopping sampling."
-                                )
-                                break
-                        else:
-                            self.logger.info(f"No repositories found on {day_str}")
-
+                            break
                     else:
-                        self.logger.warning(
-                            f"API error: Status code {response.status_code}, "
-                            f"Response: {response.text[:200]}..."
-                        )
+                        self.logger.info(f"No repositories found on {day_str}")
 
-                except Exception as e:
-                    self.logger.error(f"Error sampling day {day_str}: {str(e)}")
-                    time.sleep(min_wait * 2)  # Longer delay on error
+                else:
+                    self.logger.warning(
+                        f"API error: Status code {response.status_code}, "
+                        f"Response: {response.text[:200]}..."
+                    )
+
+            except Exception as e:
+                self.logger.error(f"Error sampling day {day_str}: {str(e)}")
+                time.sleep(min_wait * 2)
 
         # Report summary
         elapsed_time = time.time() - start_time

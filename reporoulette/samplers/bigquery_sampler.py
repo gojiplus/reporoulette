@@ -128,39 +128,26 @@ class BigQuerySampler(BaseSampler):
         return results
 
     def _build_count_query(self, days_to_sample: int, years_back: int) -> str:
-        """Build SQL query that creates temporary table of random days and counts repositories."""
+        """Build SQL query to count repositories per random day using wildcard tables."""
+        cutoff_date = (datetime.now() - timedelta(days=365 * years_back)).strftime(
+            "%Y%m%d"
+        )
         return f"""
-        -- Define parameters
-        DECLARE days_to_sample INT64 DEFAULT {days_to_sample};
-        DECLARE years_back INT64 DEFAULT {years_back};
-
-        -- Create a table of random dates to sample from
-        CREATE TEMP TABLE random_dates AS (
+        WITH random_dates AS (
           SELECT
             FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(),
-              INTERVAL CAST(FLOOR(RAND() * (365 * years_back)) AS INT64) DAY)) AS day
-          FROM UNNEST(GENERATE_ARRAY(1, days_to_sample))
-        );
-
-        -- Count unique repositories per day
+              INTERVAL CAST(FLOOR(RAND() * (365 * {years_back})) AS INT64) DAY)) AS day
+          FROM UNNEST(GENERATE_ARRAY(1, {days_to_sample}))
+        )
         SELECT
           rd.day AS sample_day,
-          COUNT(DISTINCT event.repo_name) AS repo_count
+          COUNT(DISTINCT repo.name) AS repo_count
         FROM random_dates rd
-        CROSS JOIN (
-          SELECT repo.name AS repo_name, created_at
-          FROM (
-            EXECUTE IMMEDIATE FORMAT(
-              "SELECT repo.name, created_at
-               FROM `githubarchive.day.%s`
-               WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d YEAR)
-               LIMIT 100000",
-              rd.day,
-              years_back
-            )
-          )
-        ) event
+        JOIN `githubarchive.day.*` gh
+          ON _TABLE_SUFFIX = rd.day
+          AND _TABLE_SUFFIX >= '{cutoff_date}'
         GROUP BY rd.day
+        HAVING COUNT(DISTINCT repo.name) > 0
         ORDER BY repo_count DESC
         """
 
@@ -173,31 +160,19 @@ class BigQuerySampler(BaseSampler):
         samples_to_take = day_data.get("samples_to_take", 1)
 
         return f"""
-        -- Day {i + 1}: {day} with {repo_count} repositories
         SELECT DISTINCT
-            event.repo_name AS full_name,
-            SPLIT(event.repo_name, '/')[SAFE_OFFSET(1)] AS name,
-            SPLIT(event.repo_name, '/')[SAFE_OFFSET(0)] AS owner,
-            event.repo_url AS html_url,
-            event.created_at,
+            repo.name AS full_name,
+            SPLIT(repo.name, '/')[SAFE_OFFSET(1)] AS name,
+            SPLIT(repo.name, '/')[SAFE_OFFSET(0)] AS owner,
+            CONCAT('https://github.com/', repo.name) AS html_url,
+            created_at,
             '{day}' AS sampled_from,
-            event.event_type,
+            type AS event_type,
             {repo_count} AS day_repo_count,
             {samples_to_take} AS samples_allocated
-        FROM (
-            EXECUTE IMMEDIATE FORMAT(
-                "SELECT
-                    repo.name AS repo_name,
-                    repo.url AS repo_url,
-                    created_at,
-                    type AS event_type
-                 FROM `githubarchive.day.%s`
-                 WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d YEAR)
-                 LIMIT 100000",
-                '{day}',
-                {years_back}
-            )
-        ) AS event
+        FROM `githubarchive.day.{day}`
+        WHERE repo.name IS NOT NULL
+          AND repo.name LIKE '%/%'
         ORDER BY RAND({self._seed} + {i})
         LIMIT {samples_to_take}
         """
@@ -206,7 +181,6 @@ class BigQuerySampler(BaseSampler):
         """Combine day queries into final query and deduplicate results."""
         combined_query = "\nUNION ALL\n".join(day_queries)
         return f"""
-        -- Final combined query with deduplication
         SELECT DISTINCT
             full_name,
             name,
@@ -275,7 +249,7 @@ class BigQuerySampler(BaseSampler):
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results: list[dict[str, Any]] = filter_repos(valid_repos, **kwargs)
+            self.results = filter_repos(valid_repos, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
@@ -287,7 +261,7 @@ class BigQuerySampler(BaseSampler):
         )
 
         if valid_repos:
-            day_counts_map = {}
+            day_counts_map: dict[str, dict[str, int]] = {}
             for repo in valid_repos:
                 day_sampled = repo.get("sampled_from", "unknown")
                 day_repo_count = repo.get("day_repo_count", 0)
@@ -302,7 +276,8 @@ class BigQuerySampler(BaseSampler):
             self.logger.info(f"Sampled from {len(day_counts_map)} different days")
             for day_str, data in sorted(day_counts_map.items()):
                 self.logger.debug(
-                    f"Day {day_str}: {data['count']}/{data['allocated']} samples from {data['repos']} repos"
+                    f"Day {day_str}: {data['count']}/{data['allocated']} samples "
+                    f"from {data['repos']} repos"
                 )
 
         return self.results
@@ -315,7 +290,18 @@ class BigQuerySampler(BaseSampler):
         languages: list[str] | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Sample repositories with recent commit activity."""
+        """Sample repositories with recent commit activity.
+
+        Args:
+            n_samples: Number of repositories to sample
+            created_after: Filter commits after this timestamp
+            created_before: Filter commits before this timestamp
+            languages: List of programming languages to filter by (uses github_repos.languages)
+            **kwargs: Additional filter criteria
+
+        Returns:
+            List of repository dictionaries
+        """
         self.logger.info(
             f"Sampling {n_samples} active repositories based on commit history"
         )
@@ -323,51 +309,80 @@ class BigQuerySampler(BaseSampler):
             self.logger.info(f"Filter criteria: {kwargs}")
 
         if created_after:
-            created_after = format_timestamp_query(created_after)
+            created_after_str = format_timestamp_query(created_after)
         else:
             one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-            created_after = f"'{one_year_ago}'"
+            created_after_str = f"'{one_year_ago}'"
 
         if created_before:
-            created_before = format_timestamp_query(created_before)
+            created_before_str = format_timestamp_query(created_before)
         else:
-            created_before = "CURRENT_TIMESTAMP()"
+            created_before_str = "CURRENT_TIMESTAMP()"
 
-        self.logger.info(f"Time period: {created_after} to {created_before}")
+        self.logger.info(f"Time period: {created_after_str} to {created_before_str}")
 
-        lang_list = None
         if languages:
             lang_list = ", ".join([f"'{lang}'" for lang in languages])
             self.logger.info(f"Filtering for languages: {lang_list}")
-
-        query = f"""
-        WITH repo_set AS (
+            # Use JOIN with languages table for proper language filtering
+            query = f"""
+            WITH repo_set AS (
+                SELECT DISTINCT
+                    repo AS full_name,
+                    SPLIT(repo, '/')[OFFSET(1)] AS name,
+                    SPLIT(repo, '/')[OFFSET(0)] AS owner
+                FROM
+                    `bigquery-public-data.github_repos.commits` c,
+                    UNNEST(c.repo_name) AS repo
+                WHERE
+                    TIMESTAMP_SECONDS(c.committer.time_sec)
+                        BETWEEN TIMESTAMP({created_after_str})
+                        AND TIMESTAMP({created_before_str})
+            )
             SELECT DISTINCT
-                repo AS full_name,
-                SPLIT(repo, '/')[OFFSET(1)] AS name,
-                SPLIT(repo, '/')[OFFSET(0)] AS owner
-            FROM
-                `bigquery-public-data.github_repos.commits` c,
-                UNNEST(c.repo_name) AS repo
-            WHERE
-                TIMESTAMP_SECONDS(c.committer.time_sec) BETWEEN TIMESTAMP({created_after}) AND TIMESTAMP({created_before})
-                {("AND SPLIT(repo, '/')[OFFSET(0)] IN (" + (lang_list or "") + ")") if languages and lang_list else ""}
-        )
-        SELECT
-            full_name,
-            name,
-            owner
-        FROM
-            repo_set
-        ORDER BY RAND({self._seed})
-        LIMIT {n_samples}
-        """
+                rs.full_name,
+                rs.name,
+                rs.owner,
+                CONCAT('https://github.com/', rs.full_name) AS html_url
+            FROM repo_set rs
+            JOIN `bigquery-public-data.github_repos.languages` l
+                ON rs.full_name = l.repo_name,
+                UNNEST(l.language) AS lang
+            WHERE lang.name IN ({lang_list})
+            ORDER BY RAND({self._seed})
+            LIMIT {n_samples}
+            """
+        else:
+            query = f"""
+            WITH repo_set AS (
+                SELECT DISTINCT
+                    repo AS full_name,
+                    SPLIT(repo, '/')[OFFSET(1)] AS name,
+                    SPLIT(repo, '/')[OFFSET(0)] AS owner
+                FROM
+                    `bigquery-public-data.github_repos.commits` c,
+                    UNNEST(c.repo_name) AS repo
+                WHERE
+                    TIMESTAMP_SECONDS(c.committer.time_sec)
+                        BETWEEN TIMESTAMP({created_after_str})
+                        AND TIMESTAMP({created_before_str})
+            )
+            SELECT
+                full_name,
+                name,
+                owner,
+                CONCAT('https://github.com/', full_name) AS html_url
+            FROM repo_set
+            ORDER BY RAND({self._seed})
+            LIMIT {n_samples}
+            """
+
         valid_repos = self._execute_query(query)
-        self.results: list[dict[str, Any]] = valid_repos
+        self.results = valid_repos
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results: list[dict[str, Any]] = filter_repos(valid_repos, **kwargs)
+            self.results = filter_repos(valid_repos, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
@@ -387,7 +402,7 @@ class BigQuerySampler(BaseSampler):
         Args:
             n_samples: Number of repositories to sample
             population: Type of repository population to sample from ('all' or 'active')
-            **kwargs: Any: Additional filtering criteria
+            **kwargs: Additional filtering criteria
 
         Returns:
             List of repository dictionaries
@@ -397,8 +412,8 @@ class BigQuerySampler(BaseSampler):
         )
         start_time = time.time()
 
-        self.attempts: int = 0
-        self.success_count: int = 0
+        self.attempts = 0
+        self.success_count = 0
 
         if population == "active":
             self.logger.info("Targeting active repositories with recent commits")
@@ -452,11 +467,12 @@ class BigQuerySampler(BaseSampler):
         results = self._execute_query(query)
         query_elapsed = time.time() - query_start_time
         self.logger.info(
-            f"Query completed in {query_elapsed:.2f}s: found language data for {len(results)} repositories"
+            f"Query completed in {query_elapsed:.2f}s: "
+            f"found language data for {len(results)} repositories"
         )
 
         # Process results
-        language_info = {}
+        language_info: dict[str, list[dict[str, Any]]] = {}
         for result in results:
             repo_name = result.get("repo_name")
             if repo_name and "languages" in result:
@@ -467,18 +483,19 @@ class BigQuerySampler(BaseSampler):
         elapsed_time = time.time() - start_time
 
         self.logger.info(
-            f"Language query completed in {elapsed_time:.2f}s: found data for {repos_with_language}/{len(repos)} repos"
+            f"Language query completed in {elapsed_time:.2f}s: "
+            f"found data for {repos_with_language}/{len(repos)} repos"
         )
 
         # Generate language statistics if data was found
         if language_info:
-            all_languages = []
+            all_languages: list[str] = []
             for repo_langs in language_info.values():
                 for lang_entry in repo_langs:
                     if "language" in lang_entry:
                         all_languages.append(lang_entry["language"])
 
-            language_counts = {}
+            language_counts: dict[str, int] = {}
             for lang in all_languages:
                 language_counts[lang] = language_counts.get(lang, 0) + 1
 

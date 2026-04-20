@@ -209,8 +209,7 @@ class GHArchiveSampler(BaseSampler):
                                 "full_name": repo_name,
                                 "name": name,
                                 "owner": owner,
-                                "html_url": repo.get("url")
-                                or f"https://github.com/{repo_name}",
+                                "html_url": f"https://github.com/{repo_name}",
                                 "created_at": event.get("created_at"),
                                 "sampled_from": day_str,
                                 "event_type": event.get("type"),

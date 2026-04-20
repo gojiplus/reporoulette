@@ -75,9 +75,7 @@ def sample(
             credentials_path=credentials_path, project_id=project_id
         )
     else:
-        error_msg = f"Unknown sampling method: {method}"
-        logging.error(error_msg)
-        return {"error": error_msg}
+        raise ValueError(f"Unknown sampling method: {method}")
 
     # Sample repositories
     results = sampler.sample(n_samples=n_samples, **kwargs)

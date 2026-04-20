@@ -135,33 +135,39 @@ class TestIDSampler(unittest.TestCase):
             f"Default max_id {sampler.max_id} should be greater than old default {old_default}",
         )
 
-    def test_dynamic_id_discovery(self):
-        """Test dynamic maximum ID discovery."""
-        with patch("requests.get") as mock_get:
-            # Mock responses for binary search
-            def mock_response_for_id(url, **kwargs):
-                # Extract ID from URL
-                repo_id = int(url.split("/")[-1])
-                mock_response = MagicMock()
+    def test_filter_during_collection(self):
+        """Test that _passes_filters correctly filters repositories."""
+        # Test the filter logic directly
+        sampler = IDSampler(seed=42)
 
-                # Test constant for maximum valid repository ID
-                max_valid_repo_id = 700000000
-                # Simulate that IDs up to 700M exist
-                if repo_id <= max_valid_repo_id:
-                    mock_response.status_code = 200
-                else:
-                    mock_response.status_code = 404
+        # Repo with enough stars should pass
+        high_star_repo = {
+            "stargazers_count": 150,
+            "forks_count": 10,
+            "language": "Python",
+        }
+        self.assertTrue(sampler._passes_filters(high_star_repo, min_stars=100))
 
-                return mock_response
+        # Repo with too few stars should not pass
+        low_star_repo = {
+            "stargazers_count": 50,
+            "forks_count": 10,
+            "language": "Python",
+        }
+        self.assertFalse(sampler._passes_filters(low_star_repo, min_stars=100))
 
-            mock_get.side_effect = mock_response_for_id
+        # Test language filter
+        python_repo = {"stargazers_count": 10, "language": "Python"}
+        self.assertTrue(
+            sampler._passes_filters(python_repo, languages=["Python", "Java"])
+        )
 
-            # Create sampler with auto-discovery
-            sampler = IDSampler(auto_discover_max=True, log_level=logging.WARNING)
+        js_repo = {"stargazers_count": 10, "language": "JavaScript"}
+        self.assertFalse(sampler._passes_filters(js_repo, languages=["Python", "Java"]))
 
-            # Check that max_id was discovered and adjusted
-            self.assertGreater(sampler.max_id, 500000000)
-            self.assertLess(sampler.max_id, 900000000)
+        # Test no filter passes everything
+        any_repo = {"stargazers_count": 1}
+        self.assertTrue(sampler._passes_filters(any_repo))
 
 
 if __name__ == "__main__":
