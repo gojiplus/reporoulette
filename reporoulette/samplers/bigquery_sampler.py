@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .base import BaseSampler
-from .bq_utils import execute_query, filter_repos, format_timestamp_query
+from .bq_utils import execute_query, format_timestamp_query
 
 if TYPE_CHECKING:
     from google.cloud import (
@@ -277,7 +277,7 @@ class BigQuerySampler(BaseSampler):
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results = filter_repos(valid_repos, logger=self.logger, **kwargs)
+            self.results = self._filter_repos(valid_repos, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
@@ -358,7 +358,7 @@ class BigQuerySampler(BaseSampler):
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results = filter_repos(valid_repos, logger=self.logger, **kwargs)
+            self.results = self._filter_repos(valid_repos, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
