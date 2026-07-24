@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "reporoulette"
-version = "0.5.0"
+version = "0.6.0"
 description = "Random sampling of GitHub repositories using multiple methods"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -70,8 +70,8 @@ all = []  # Install with: pip install reporoulette[bigquery,docs,dev]
 project = "reporoulette"
 author = "Gaurav Sood"
 copyright = "2025, Gaurav Sood"
-version = "0.5.0"
-release = "0.5.0"
+version = "0.6.0"
+release = "0.6.0"
 language = "en"
 extensions = [
     "sphinx.ext.autodoc",
@@ -154,6 +154,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402", "F401", "F403", "F811"]
 "tests/*" = ["D", "PLR2004", "PLC0415"]  # Disable docstring, magic number, and import location checks for tests
+"scripts/*" = ["D", "PLR2004", "PLC0415", "PLR0912", "PLR0915"]  # Same relaxations for maintenance scripts
 "reporoulette/samplers/*" = ["PLR0912", "PLR0913", "PLR0915"]  # Allow complex samplers
 
 [tool.ruff.lint.pydocstyle]
