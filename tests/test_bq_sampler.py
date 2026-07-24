@@ -53,6 +53,14 @@ class TestBigQuerySamplerQueries(unittest.TestCase):
             self.assertIn("FARM_FINGERPRINT", query, f"{name} query is not seeded")
             self.assertIn("42", query, f"{name} query does not embed the seed")
 
+    def test_count_query_wildcard_excludes_views(self):
+        # Regression: the githubarchive.day dataset contains views
+        # (yesterday, today) next to the date tables, and a bare `day.*`
+        # wildcard fails with "Views cannot be queried through prefix".
+        query = self.all_queries(self.sampler)["count"]
+        self.assertIn("`githubarchive.day.2*`", query)
+        self.assertNotIn("`githubarchive.day.*`", query)
+
     def test_day_query_dedups_by_repo_name(self):
         query = self.all_queries(self.sampler)["day"]
         self.assertIn("GROUP BY repo.name", query)
@@ -60,6 +68,17 @@ class TestBigQuerySamplerQueries(unittest.TestCase):
     def test_combined_query_dedups_across_days(self):
         query = self.all_queries(self.sampler)["combined"]
         self.assertIn("GROUP BY full_name", query)
+
+    def test_union_operands_are_parenthesized(self):
+        # Regression: day subqueries end in ORDER BY ... LIMIT, and BigQuery
+        # rejects bare UNION ALL between such operands ("Expected \")\" but
+        # got keyword UNION").
+        day_data = {"sample_day": "20240101", "repo_count": 100, "samples_to_take": 5}
+        day_queries = [
+            self.sampler._build_day_query(day_data, i, years_back=2) for i in range(2)
+        ]
+        combined = self.sampler._combine_day_queries(day_queries, n_samples=10)
+        self.assertIn(")\nUNION ALL\n(", combined)
 
     def test_sample_active_queries_seeded_and_valid(self):
         for languages in (None, ["Python", "Go"]):

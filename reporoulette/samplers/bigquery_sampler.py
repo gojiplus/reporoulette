@@ -148,9 +148,9 @@ class BigQuerySampler(BaseSampler):
           rd.day AS sample_day,
           COUNT(DISTINCT repo.name) AS repo_count
         FROM random_dates rd
-        JOIN `githubarchive.day.*` gh
-          ON _TABLE_SUFFIX = rd.day
-          AND _TABLE_SUFFIX >= '{cutoff_date}'
+        JOIN `githubarchive.day.2*` gh
+          ON CONCAT('2', _TABLE_SUFFIX) = rd.day
+          AND CONCAT('2', _TABLE_SUFFIX) >= '{cutoff_date}'
         GROUP BY rd.day
         HAVING COUNT(DISTINCT repo.name) > 0
         ORDER BY repo_count DESC
@@ -185,7 +185,8 @@ class BigQuerySampler(BaseSampler):
 
     def _combine_day_queries(self, day_queries: list[str], n_samples: int) -> str:
         """Combine day queries into final query and deduplicate results."""
-        combined_query = "\nUNION ALL\n".join(day_queries)
+        # UNION ALL operands that carry ORDER BY/LIMIT must be parenthesized
+        combined_query = "\nUNION ALL\n".join(f"({q})" for q in day_queries)
         return f"""
         SELECT
             full_name,
