@@ -2,7 +2,10 @@
 import logging
 import random
 import time
+from datetime import datetime, timedelta
 from typing import Any
+
+import requests
 
 from ..logging_config import get_logger
 from .base import HTTP_OK, BaseSampler
@@ -17,11 +20,16 @@ class IDSampler(BaseSampler):
     repositories with ID <= max_id.
     """
 
+    # Approximate newest repository ID, measured 2026-07 via live validation
+    # (newest observed ID: ~1.31B). IDs grow by roughly 200-300M per year;
+    # call update_max_id() for the current ceiling.
+    DEFAULT_MAX_ID = 1_300_000_000
+
     def __init__(
         self,
         token: str | None = None,
         min_id: int = 1,
-        max_id: int = 850000000,
+        max_id: int = DEFAULT_MAX_ID,
         rate_limit_safety: int = 100,
         seed: int | None = None,
         log_level: int = logging.INFO,
@@ -31,8 +39,10 @@ class IDSampler(BaseSampler):
         Args:
             token: GitHub Personal Access Token
             min_id: Minimum repository ID to sample from
-            max_id: Maximum repository ID to sample from (default: 850M based on
-                    validation testing that found repositories at ID 800M+)
+            max_id: Maximum repository ID to sample from. The default is a
+                dated constant (see DEFAULT_MAX_ID); repositories with
+                higher IDs are unreachable, so call update_max_id() or pass
+                the current ceiling explicitly for full coverage.
             rate_limit_safety: Stop when this many API requests remain
             seed: Random seed for reproducibility
             log_level: Logging level (default: logging.INFO)
@@ -44,6 +54,7 @@ class IDSampler(BaseSampler):
         self.logger.setLevel(log_level)
 
         # Set random seed if provided
+        self._seed = seed
         if seed is not None:
             random.seed(seed)
             self.logger.info(f"Random seed set to: {seed}")
@@ -55,6 +66,34 @@ class IDSampler(BaseSampler):
         self.logger.info(
             f"Initialized IDSampler with min_id={min_id}, max_id={self.max_id}"
         )
+
+    def update_max_id(self) -> int:
+        """Refresh max_id from the newest repository visible on GitHub.
+
+        Makes one search API call for repositories created in the last day
+        and sets max_id to the highest ID observed (approximately the
+        current ID ceiling). Falls back to the existing max_id with a
+        warning if the call fails.
+
+        Returns:
+            The (possibly updated) max_id
+        """
+        since = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        try:
+            response = requests.get(
+                f"{self.api_base_url}/search/repositories",
+                params={"q": f"created:>={since}", "per_page": 100},
+                headers=self._get_headers(),
+                timeout=30,
+            )
+            response.raise_for_status()
+            items = response.json()["items"]
+            if items:
+                self.max_id = max(item["id"] for item in items)
+                self.logger.info(f"Updated max_id to {self.max_id}")
+        except Exception as e:
+            self.logger.warning(f"Could not update max_id (keeping {self.max_id}): {e}")
+        return self.max_id
 
     def _passes_filters(self, repo_data: dict[str, Any], **kwargs: Any) -> bool:
         """Check if a repository passes all filter criteria.
@@ -146,7 +185,7 @@ class IDSampler(BaseSampler):
 
             if should_check_limit:
                 remaining = self._check_rate_limit()
-                if remaining <= self.rate_limit_safety:
+                if remaining is not None and remaining <= self.rate_limit_safety:
                     self.logger.warning(
                         f"Approaching GitHub API rate limit ({remaining} remaining). "
                         f"Stopping with {len(filtered_repos)} samples."

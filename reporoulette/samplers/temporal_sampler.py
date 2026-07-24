@@ -80,6 +80,9 @@ class TemporalSampler(BaseSampler):
         )
 
         self.rate_limit_safety = rate_limit_safety
+        # Requests go through the Search API, whose bucket allows only
+        # 30 requests/minute (vs 5,000/hour for core)
+        self.rate_limit_resource = "search"
         self.api_base_url = "https://api.github.com"
 
         time_delta = self.end_date - self.start_date
@@ -247,7 +250,7 @@ class TemporalSampler(BaseSampler):
             # Check rate limit periodically
             if i % 5 == 0:
                 remaining = self._check_rate_limit("search")
-                if remaining <= self.rate_limit_safety:
+                if remaining is not None and remaining <= self.rate_limit_safety:
                     self.logger.warning(
                         f"Approaching GitHub API rate limit ({remaining} remaining). "
                         f"Stopping initial sampling after {i}/{days_to_sample} days."
@@ -346,7 +349,7 @@ class TemporalSampler(BaseSampler):
             # Check if we're approaching rate limit
             if iterations % 5 == 0:
                 remaining = self._check_rate_limit("search")
-                if remaining <= self.rate_limit_safety:
+                if remaining is not None and remaining <= self.rate_limit_safety:
                     self.logger.warning(
                         f"Approaching GitHub API rate limit ({remaining} remaining). "
                         f"Stopping after collecting {len(all_repos)}/{n_samples} repositories."
@@ -503,142 +506,3 @@ class TemporalSampler(BaseSampler):
             )
 
         return self.results
-
-    def _filter_repos(
-        self, repos: list[dict[str, Any]], **kwargs: Any
-    ) -> list[dict[str, Any]]:
-        """Apply additional filters to the list of repositories.
-
-        Args:
-            repos: List of repository dictionaries
-            **kwargs: Filter criteria
-
-        Returns:
-            Filtered list of repositories
-        """
-        if not kwargs:
-            return repos
-
-        self.logger.debug(
-            f"Filtering {len(repos)} repositories with criteria: {kwargs}"
-        )
-        filtered_repos = repos.copy()
-
-        # Filter by languages if specified
-        if "languages" in kwargs and kwargs["languages"]:
-            languages = [lang.lower() for lang in kwargs["languages"]]
-            before_count = len(filtered_repos)
-            filtered_repos = [
-                repo
-                for repo in filtered_repos
-                if (lang := repo.get("language")) and lang.lower() in languages
-            ]
-            self.logger.debug(
-                f"Filtered by languages {languages}: "
-                f"{before_count - len(filtered_repos)} repos removed, {len(filtered_repos)} remaining"
-            )
-
-        # Filter by language (single language) if specified
-        elif "language" in kwargs and kwargs["language"]:
-            language = kwargs["language"].lower()
-            before_count = len(filtered_repos)
-            filtered_repos = [
-                repo
-                for repo in filtered_repos
-                if (lang := repo.get("language")) and lang.lower() == language
-            ]
-            self.logger.debug(
-                f"Filtered by language '{language}': "
-                f"{before_count - len(filtered_repos)} repos removed, {len(filtered_repos)} remaining"
-            )
-
-        # Filter by min_stars if specified
-        if "min_stars" in kwargs:
-            min_stars = kwargs["min_stars"]
-            before_count = len(filtered_repos)
-            filtered_repos = [
-                repo
-                for repo in filtered_repos
-                if repo.get("stargazers_count", 0) >= min_stars
-            ]
-            self.logger.debug(
-                f"Filtered by min_stars {min_stars}: "
-                f"{before_count - len(filtered_repos)} repos removed, {len(filtered_repos)} remaining"
-            )
-
-        # Filter by min_size_kb if specified
-        if "min_size_kb" in kwargs:
-            min_size = kwargs["min_size_kb"]
-            before_count = len(filtered_repos)
-            filtered_repos = [
-                repo for repo in filtered_repos if repo.get("size", 0) >= min_size
-            ]
-            self.logger.debug(
-                f"Filtered by min_size_kb {min_size}: "
-                f"{before_count - len(filtered_repos)} repos removed, {len(filtered_repos)} remaining"
-            )
-
-        # Filter by owner if specified
-        if "owner" in kwargs:
-            owner = kwargs["owner"]
-            before_count = len(filtered_repos)
-            filtered_repos = [
-                repo for repo in filtered_repos if repo.get("owner") == owner
-            ]
-            self.logger.debug(
-                f"Filtered by owner '{owner}': "
-                f"{before_count - len(filtered_repos)} repos removed, {len(filtered_repos)} remaining"
-            )
-
-        # Filter by created_after if specified
-        if "created_after" in kwargs:
-            created_after = kwargs["created_after"]
-            if isinstance(created_after, str):
-                created_after = datetime.fromisoformat(
-                    created_after.replace("Z", "+00:00")
-                )
-            before_count = len(filtered_repos)
-            filtered_repos = [
-                repo
-                for repo in filtered_repos
-                if repo.get("created_at")
-                and datetime.fromisoformat(repo["created_at"].replace("Z", "+00:00"))
-                >= created_after
-            ]
-            self.logger.debug(
-                f"Filtered by created_after {created_after}: "
-                f"{before_count - len(filtered_repos)} repos removed, {len(filtered_repos)} remaining"
-            )
-
-        # Filter by created_before if specified
-        if "created_before" in kwargs:
-            created_before = kwargs["created_before"]
-            if isinstance(created_before, str):
-                created_before = datetime.fromisoformat(
-                    created_before.replace("Z", "+00:00")
-                )
-            before_count = len(filtered_repos)
-            filtered_repos = [
-                repo
-                for repo in filtered_repos
-                if repo.get("created_at")
-                and datetime.fromisoformat(repo["created_at"].replace("Z", "+00:00"))
-                <= created_before
-            ]
-            self.logger.debug(
-                f"Filtered by created_before {created_before}: "
-                f"{before_count - len(filtered_repos)} repos removed, {len(filtered_repos)} remaining"
-            )
-
-        # Filter by max_repos if specified (limit total number of repos)
-        if "max_repos" in kwargs:
-            max_repos = kwargs["max_repos"]
-            if len(filtered_repos) > max_repos:
-                # Shuffle first if seed is set to maintain reproducibility
-                if self._seed is not None:
-                    random.seed(self._seed)
-                    random.shuffle(filtered_repos)
-                filtered_repos = filtered_repos[:max_repos]
-                self.logger.debug(f"Limited result to {max_repos} repositories")
-
-        return filtered_repos

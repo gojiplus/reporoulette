@@ -115,25 +115,44 @@ class TestIDSampler(unittest.TestCase):
             self.assertIn("full_name", repo)
 
     def test_default_range_covers_known_ids(self):
-        """Test that new default max_id covers known high repository IDs."""
-        # Create sampler with default parameters
+        """Test that the default max_id covers known high repository IDs."""
         sampler = IDSampler(log_level=logging.WARNING)
 
-        # Verify new default covers the repository ID we found in validation
-        known_high_id = 800000000  # Found during validation testing
+        # Live validation (2026-07) observed repository IDs around 1.31B;
+        # the previous 850M default excluded ~35% of the ID space.
+        known_high_id = 1_290_000_000
         self.assertGreaterEqual(
             sampler.max_id,
             known_high_id,
             f"Default max_id {sampler.max_id} should cover known repository ID {known_high_id}",
         )
 
-        # Verify the update actually happened
-        old_default = 500000000
-        self.assertGreater(
-            sampler.max_id,
-            old_default,
-            f"Default max_id {sampler.max_id} should be greater than old default {old_default}",
-        )
+    @patch("reporoulette.samplers.id_sampler.requests.get")
+    def test_update_max_id(self, mock_get):
+        """update_max_id sets max_id to the highest observed repo ID."""
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "items": [{"id": 1_400_000_001}, {"id": 1_399_999_000}]
+        }
+        mock_get.return_value = response
+
+        sampler = IDSampler(log_level=logging.WARNING)
+        result = sampler.update_max_id()
+
+        self.assertEqual(result, 1_400_000_001)
+        self.assertEqual(sampler.max_id, 1_400_000_001)
+
+    @patch("reporoulette.samplers.id_sampler.requests.get")
+    def test_update_max_id_keeps_current_on_failure(self, mock_get):
+        mock_get.side_effect = Exception("network down")
+
+        sampler = IDSampler(log_level=logging.WARNING)
+        before = sampler.max_id
+        result = sampler.update_max_id()
+
+        self.assertEqual(result, before)
+        self.assertEqual(sampler.max_id, before)
 
     @patch("time.sleep")
     @patch("requests.get")

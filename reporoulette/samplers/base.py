@@ -1,7 +1,9 @@
 # reporoulette/samplers/base.py
 import logging
+import random
 import time
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
@@ -29,6 +31,9 @@ class BaseSampler(ABC):
     ) -> None:
         self.token: str | None = token
         self.rate_limit_safety: int = rate_limit_safety
+        # Which rate-limit bucket this sampler's requests draw from;
+        # samplers using the Search API must override with "search"
+        self.rate_limit_resource: str = "core"
         self.results: list[dict[str, Any]] = []
         self.attempts: int = 0
         self.success_count: int = 0
@@ -64,10 +69,52 @@ class BaseSampler(ABC):
         """
         pass
 
+    @staticmethod
+    def _owner_login(repo: dict[str, Any]) -> str | None:
+        """Return the owner login for API-shaped or flat repo dictionaries.
+
+        Args:
+            repo: Repository dictionary
+
+        Returns:
+            Owner login string, or None if absent
+        """
+        owner: Any = repo.get("owner")
+        if isinstance(owner, dict):
+            owner = owner.get("login")
+        return owner if isinstance(owner, str) else None
+
+    @staticmethod
+    def _parse_iso(value: str | datetime) -> datetime:
+        """Parse an ISO timestamp (Z-suffixed or not) to an aware datetime.
+
+        Naive inputs are assumed UTC so mixed inputs stay comparable.
+
+        Args:
+            value: Timestamp string or datetime
+
+        Returns:
+            Timezone-aware datetime
+        """
+        if not isinstance(value, datetime):
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value
+
     def _filter_repos(
         self, repos: list[dict[str, Any]], **filters: Any
     ) -> list[dict[str, Any]]:
         """Filter repositories based on criteria.
+
+        Shared by all samplers. Supported filters: min_stars, min_forks,
+        min_size_kb (>= thresholds), languages / language (case-insensitive
+        membership), owner (exact login), created_after / created_before
+        (ISO strings or datetimes), and max_repos (seeded random subsample).
+        If no repository in the input carries the field a filter needs
+        (e.g. BigQuery and GH Archive results have no star or language
+        data), that filter is skipped with a warning rather than dropping
+        every repository. Unknown filter names are ignored with a warning.
 
         Args:
             repos: List of repository data to filter
@@ -76,24 +123,83 @@ class BaseSampler(ABC):
         Returns:
             Filtered list of repositories
         """
-        filtered = repos
+        if not filters:
+            return repos
 
-        if "min_stars" in filters:
+        filtered = list(repos)
+
+        threshold_fields = {
+            "min_stars": "stargazers_count",
+            "min_forks": "forks_count",
+            "min_size_kb": "size",
+        }
+        for key, field in threshold_fields.items():
+            if key not in filters:
+                continue
+            if not any(field in r for r in filtered):
+                self.logger.warning(
+                    f"Filter '{key}' skipped: no repository has a '{field}' field"
+                )
+                continue
+            threshold = filters[key]
+            filtered = [r for r in filtered if r.get(field, 0) >= threshold]
+
+        wanted_languages: list[Any] = list(filters.get("languages") or [])
+        if filters.get("language"):
+            wanted_languages.append(filters["language"])
+        if wanted_languages:
+            if not any("language" in r for r in filtered):
+                self.logger.warning(
+                    "Filter 'languages' skipped: no repository has a 'language' field"
+                )
+            else:
+                wanted = {str(lang).lower() for lang in wanted_languages}
+                filtered = [
+                    r
+                    for r in filtered
+                    if r.get("language") and str(r["language"]).lower() in wanted
+                ]
+
+        if "owner" in filters:
+            filtered = [r for r in filtered if self._owner_login(r) == filters["owner"]]
+
+        if "created_after" in filters:
+            cutoff = self._parse_iso(filters["created_after"])
             filtered = [
                 r
                 for r in filtered
-                if r.get("stargazers_count", 0) >= filters["min_stars"]
+                if r.get("created_at") and self._parse_iso(r["created_at"]) >= cutoff
             ]
 
-        if "min_forks" in filters:
+        if "created_before" in filters:
+            cutoff = self._parse_iso(filters["created_before"])
             filtered = [
-                r for r in filtered if r.get("forks_count", 0) >= filters["min_forks"]
+                r
+                for r in filtered
+                if r.get("created_at") and self._parse_iso(r["created_at"]) <= cutoff
             ]
 
-        if "languages" in filters and filters["languages"]:
-            filtered = [
-                r for r in filtered if r.get("language") in filters["languages"]
-            ]
+        if "max_repos" in filters and len(filtered) > filters["max_repos"]:
+            seed = getattr(self, "_seed", None)
+            if seed is not None:
+                random.seed(seed)
+            random.shuffle(filtered)
+            filtered = filtered[: filters["max_repos"]]
+
+        known = {
+            "min_stars",
+            "min_forks",
+            "min_size_kb",
+            "languages",
+            "language",
+            "owner",
+            "created_after",
+            "created_before",
+            "max_repos",
+        }
+        for key in filters:
+            if key not in known:
+                self.logger.warning(f"Unknown filter '{key}' ignored")
 
         return filtered
 
@@ -108,14 +214,16 @@ class BaseSampler(ABC):
             headers["Authorization"] = f"token {self.token}"
         return headers
 
-    def _check_rate_limit(self, resource: str = "core") -> int:
+    def _check_rate_limit(self, resource: str = "core") -> int | None:
         """Check GitHub API rate limit and return remaining requests.
 
         Args:
             resource: Which rate limit resource to check ("core" or "search")
 
         Returns:
-            Number of remaining API requests, or 0 if check fails
+            Number of remaining API requests, or None if the check itself
+            failed (so a flaky /rate_limit endpoint doesn't veto real
+            requests the way a literal 0 would)
         """
         headers = self._get_headers()
 
@@ -134,10 +242,10 @@ class BaseSampler(ABC):
                 self.logger.warning(
                     f"Failed to check rate limit. Status code: {response.status_code}"
                 )
-                return 0
+                return None
         except Exception as e:
             self.logger.error(f"Error checking rate limit: {str(e)}")
-            return 0
+            return None
 
     def _make_github_request(
         self,
@@ -179,9 +287,9 @@ class BaseSampler(ABC):
     ) -> requests.Response | None:
         """Helper method to reduce complexity of _make_github_request."""
         for attempt in range(max_retries + 1):
-            # Check rate limit before making request
-            remaining = self._check_rate_limit()
-            if remaining <= self.rate_limit_safety:
+            # Check the bucket this sampler's requests actually draw from
+            remaining = self._check_rate_limit(self.rate_limit_resource)
+            if remaining is not None and remaining <= self.rate_limit_safety:
                 self.logger.warning(
                     f"Approaching GitHub API rate limit ({remaining} remaining). "
                     f"Request aborted for safety."

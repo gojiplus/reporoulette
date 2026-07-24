@@ -1,6 +1,6 @@
 # Randomization Validation Report
 
-Generated 2026-07-24 14:40 by `scripts/validate_randomization.py`. All tests at alpha = 0.05. Chi-square critical values use the Wilson-Hilferty approximation; KS uses the asymptotic two-sample critical value. Aggregating draws across seeded runs treats draws as independent, which is a good approximation for sample sizes far below the population size.
+Generated 2026-07-24 15:23 by `scripts/validate_randomization.py`. All tests at alpha = 0.05. Chi-square critical values use the Wilson-Hilferty approximation; KS uses the asymptotic two-sample critical value. Aggregating draws across seeded runs treats draws as independent, which is a good approximation for sample sizes far below the population size.
 
 ## P1 - GH Archive ground-truth inclusion test (GHArchiveSampler)
 
@@ -48,8 +48,8 @@ Search-cap coverage: mean fraction of each sampled day's repositories reachable 
 
 | Check | Result |
 |---|---|
-| Returns real data (was always empty before the invalid-SQL fixes) | 46 repos - PASS |
-| Same seed, two live runs identical | not verified - second run blocked by the project's BigQuery quota; determinism is covered at the SQL level by the unit suite (same seed produces byte-identical queries and ORDER BY FARM_FINGERPRINT is deterministic) |
+| Returns real data (was always empty before the invalid-SQL fixes) | 49 repos - PASS |
+| Same seed, two live runs identical | PASS |
 | Duplicate repositories in output | 0 - PASS |
 | Days used / allocation vs day size correlation | 5 days, r = 1.00 |
 

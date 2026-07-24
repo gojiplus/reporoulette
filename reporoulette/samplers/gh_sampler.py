@@ -346,38 +346,3 @@ class GHArchiveSampler(BaseSampler):
         self.results: list[dict[str, Any]] = result
 
         return result
-
-    def _filter_repos(
-        self, repos: list[dict[str, Any]], **kwargs: Any
-    ) -> list[dict[str, Any]]:
-        """Filter repositories based on criteria.
-
-        Args:
-            repos: List of repository data
-            **kwargs: Filter criteria as key-value pairs
-
-        Returns:
-            Filtered list of repositories
-        """
-        # Implementation of filter logic
-        filtered = repos
-
-        # Example: filter by owner
-        if "owner" in kwargs:
-            owner = kwargs["owner"]
-            filtered = [r for r in filtered if r["owner"] == owner]
-            self.logger.debug(
-                f"Filtered by owner '{owner}': {len(filtered)} repos remaining"
-            )
-
-        # Example: filter by min stars (if available)
-        if "min_stars" in kwargs and any("stargazers_count" in r for r in repos):
-            min_stars = int(kwargs["min_stars"])
-            filtered = [
-                r for r in filtered if r.get("stargazers_count", 0) >= min_stars
-            ]
-            self.logger.debug(
-                f"Filtered by min_stars {min_stars}: {len(filtered)} repos remaining"
-            )
-
-        return filtered
