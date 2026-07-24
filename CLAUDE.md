@@ -30,10 +30,13 @@ uv run --extra bigquery python -c "import reporoulette"
 uv run pytest
 
 # Run specific test file
-uv run pytest reporoulette/tests/test_id_sampler.py
-uv run pytest reporoulette/tests/test_gharchive_sampler.py
-uv run pytest reporoulette/tests/test_bq_sampler.py
-uv run pytest reporoulette/tests/test_temporal_sampler.py
+uv run pytest tests/test_id_sampler.py
+uv run pytest tests/test_gharchive_sampler.py
+uv run pytest tests/test_bq_sampler.py
+uv run pytest tests/test_temporal_sampler.py
+
+# Skip live-credential tests (BigQuery live tests are marked "integration")
+uv run pytest -m "not integration"
 
 # Run tests with coverage
 uv run pytest --cov=reporoulette --cov-report=xml
@@ -144,11 +147,12 @@ uv run pre-commit autoupdate
 2. Implement the abstract `sample()` method
 3. Add appropriate error handling and logging
 4. Update `__init__.py` files to export the new sampler
-5. Add comprehensive tests in `reporoulette/tests/`
+5. Add comprehensive tests in `tests/`
 
 ### Testing Guidelines
-- Each sampler has dedicated test files in `reporoulette/tests/`
-- Tests require API credentials (stored in CI secrets)
+- Each sampler has dedicated test files in `tests/`
+- Tests run offline with mocked HTTP/BigQuery clients; only tests marked
+  `@pytest.mark.integration` need live credentials (stored in CI secrets)
 - Mock external API calls when appropriate
 - Test both success and failure scenarios
 
@@ -158,3 +162,15 @@ uv run pre-commit autoupdate
 - Handle rate limiting gracefully with configurable safety margins
 - Return standardized repository data structures
 - Track success rates and attempt counts
+
+### Known Limitations / Follow-ups
+- The four samplers still carry divergent `_filter_repos` implementations
+  (`base.py`, `temporal_sampler.py`, `gh_sampler.py`, `bq_utils.py`);
+  unifying them into one shared filter in `BaseSampler` is a pending refactor.
+- `BaseSampler._attempt_request` checks the "core" rate-limit bucket even for
+  Search API requests (TemporalSampler needs the much tighter "search"
+  bucket), and `_check_rate_limit` returns 0 on transient failures, which
+  silently skips the real request.
+- `IDSampler.max_id` defaults to a static 850,000,000; repositories created
+  after that ID was measured are unreachable until the default is raised or
+  made self-updating.

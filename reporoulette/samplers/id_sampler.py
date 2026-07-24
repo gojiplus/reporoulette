@@ -13,6 +13,8 @@ class IDSampler(BaseSampler):
 
     This sampler generates random repository IDs within a specified range
     and attempts to retrieve repositories with those IDs from GitHub.
+    The resulting sample is approximately uniform over all existing public
+    repositories with ID <= max_id.
     """
 
     def __init__(

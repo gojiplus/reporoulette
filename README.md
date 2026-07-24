@@ -24,6 +24,15 @@ pip install -e .
 
 RepoRoulette provides three distinct methods for random GitHub repository sampling:
 
+### What population does each sampler draw from?
+
+The four samplers draw from different populations, and only one is (approximately) uniform over all repositories. Pick the one whose population matches your research question:
+
+- **IDSampler** — ≈ uniform over all existing public repositories with ID ≤ `max_id`. The closest thing to a true random sample of GitHub; the cost is a low hit rate (most probed IDs are deleted, private, or unassigned).
+- **TemporalSampler** — repositories *pushed* on randomly chosen days. A repository active on many days has proportionally more chances of being sampled, so the sample is biased toward actively maintained projects. The GitHub Search API also caps results at 1,000 per query, so on high-activity days only the most recently updated 1,000 repositories are reachable.
+- **BigQuerySampler** — repositories generating GH Archive *events* on sampled days. Event-based, so also biased toward active repositories.
+- **GHArchiveSampler** — with the default `CreateEvent` filter, repositories *created* on sampled days; with other event types, an activity-biased event population like the BigQuery sampler.
+
 ### 1. 🎯 ID-Based Sampling
 
 Uses GitHub's sequential repository ID system to generate truly random samples by probing random IDs from the valid ID range. The downside of using the method is that the hit rate can be low (as many IDs are invalid, partly because the repo. is private or abandoned, etc.) And any filtering on repo. characteristics must wait till you have the names.

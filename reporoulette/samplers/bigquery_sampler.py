@@ -33,6 +33,8 @@ class BigQuerySampler(BaseSampler):
 
     This sampler leverages the public GitHub dataset in Google BigQuery to
     efficiently sample repositories with complex criteria and at scale.
+    The population is repositories generating GH Archive events on the
+    sampled days, so the sample is biased toward active repositories.
     """
 
     def __init__(
@@ -136,8 +138,11 @@ class BigQuerySampler(BaseSampler):
         WITH random_dates AS (
           SELECT
             FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(),
-              INTERVAL CAST(FLOOR(RAND() * (365 * {years_back})) AS INT64) DAY)) AS day
-          FROM UNNEST(GENERATE_ARRAY(1, {days_to_sample}))
+              INTERVAL MOD(
+                ABS(FARM_FINGERPRINT(CONCAT(CAST(n AS STRING), '-{self._seed}'))),
+                365 * {years_back}
+              ) DAY)) AS day
+          FROM UNNEST(GENERATE_ARRAY(1, {days_to_sample})) AS n
         )
         SELECT
           rd.day AS sample_day,
@@ -160,20 +165,21 @@ class BigQuerySampler(BaseSampler):
         samples_to_take = day_data.get("samples_to_take", 1)
 
         return f"""
-        SELECT DISTINCT
+        SELECT
             repo.name AS full_name,
             SPLIT(repo.name, '/')[SAFE_OFFSET(1)] AS name,
             SPLIT(repo.name, '/')[SAFE_OFFSET(0)] AS owner,
             CONCAT('https://github.com/', repo.name) AS html_url,
-            created_at,
+            MIN(created_at) AS created_at,
             '{day}' AS sampled_from,
-            type AS event_type,
+            ANY_VALUE(type) AS event_type,
             {repo_count} AS day_repo_count,
             {samples_to_take} AS samples_allocated
         FROM `githubarchive.day.{day}`
         WHERE repo.name IS NOT NULL
           AND repo.name LIKE '%/%'
-        ORDER BY RAND({self._seed} + {i})
+        GROUP BY repo.name
+        ORDER BY FARM_FINGERPRINT(CONCAT(repo.name, '-{self._seed}-{i}'))
         LIMIT {samples_to_take}
         """
 
@@ -181,20 +187,21 @@ class BigQuerySampler(BaseSampler):
         """Combine day queries into final query and deduplicate results."""
         combined_query = "\nUNION ALL\n".join(day_queries)
         return f"""
-        SELECT DISTINCT
+        SELECT
             full_name,
-            name,
-            owner,
-            html_url,
-            created_at,
-            sampled_from,
-            event_type,
-            day_repo_count,
-            samples_allocated
+            ANY_VALUE(name) AS name,
+            ANY_VALUE(owner) AS owner,
+            ANY_VALUE(html_url) AS html_url,
+            MIN(created_at) AS created_at,
+            ANY_VALUE(sampled_from) AS sampled_from,
+            ANY_VALUE(event_type) AS event_type,
+            ANY_VALUE(day_repo_count) AS day_repo_count,
+            ANY_VALUE(samples_allocated) AS samples_allocated
         FROM (
             {combined_query}
         )
-        ORDER BY RAND({self._seed})
+        GROUP BY full_name
+        ORDER BY FARM_FINGERPRINT(CONCAT(full_name, '-{self._seed}'))
         LIMIT {n_samples}
         """
 
@@ -249,7 +256,7 @@ class BigQuerySampler(BaseSampler):
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results = filter_repos(valid_repos, **kwargs)
+            self.results = filter_repos(valid_repos, logger=self.logger, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
@@ -339,17 +346,18 @@ class BigQuerySampler(BaseSampler):
                         BETWEEN TIMESTAMP({created_after_str})
                         AND TIMESTAMP({created_before_str})
             )
-            SELECT DISTINCT
+            SELECT
                 rs.full_name,
-                rs.name,
-                rs.owner,
+                ANY_VALUE(rs.name) AS name,
+                ANY_VALUE(rs.owner) AS owner,
                 CONCAT('https://github.com/', rs.full_name) AS html_url
             FROM repo_set rs
             JOIN `bigquery-public-data.github_repos.languages` l
                 ON rs.full_name = l.repo_name,
                 UNNEST(l.language) AS lang
             WHERE lang.name IN ({lang_list})
-            ORDER BY RAND({self._seed})
+            GROUP BY rs.full_name
+            ORDER BY FARM_FINGERPRINT(CONCAT(rs.full_name, '-{self._seed}'))
             LIMIT {n_samples}
             """
         else:
@@ -373,7 +381,7 @@ class BigQuerySampler(BaseSampler):
                 owner,
                 CONCAT('https://github.com/', full_name) AS html_url
             FROM repo_set
-            ORDER BY RAND({self._seed})
+            ORDER BY FARM_FINGERPRINT(CONCAT(full_name, '-{self._seed}'))
             LIMIT {n_samples}
             """
 
@@ -382,7 +390,7 @@ class BigQuerySampler(BaseSampler):
 
         filtered_count_before = len(valid_repos)
         if kwargs:
-            self.results = filter_repos(valid_repos, **kwargs)
+            self.results = filter_repos(valid_repos, logger=self.logger, **kwargs)
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
