@@ -195,7 +195,10 @@ class TemporalSampler(BaseSampler):
         """Sample repositories by randomly selecting days with weighting based on repo count.
 
         Args:
-            n_samples: Target number of repositories to collect
+            n_samples: Target number of repositories to collect. Collection
+                proceeds a full search page at a time, so the returned list
+                can exceed this target (it is a lower bound, not an exact
+                size).
             days_to_sample: Number of random days to initially sample for count assessment
             per_page: Number of results per page (max 100)
             min_wait: Minimum wait time between API requests

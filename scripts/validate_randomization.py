@@ -18,6 +18,14 @@ Sections (select with flags, or --all):
   P5  BigQuery live check: seeded reproducibility, duplicate-freeness, and
       day allocation sanity against real BigQuery. Requires Google
       application default credentials.
+  P6  Live API contract checks: GH Archive URL scheme and event schema,
+      the /repositories/{id} field contract, and a temporal end-to-end
+      mini-run verifying pushed_at falls inside the sampled day. Requires
+      GITHUB_TOKEN.
+  P7  BigQuery dry-run validation: compile every query shape the sampler
+      can emit and report the bytes each would scan - free, catches all
+      SQL-validity bugs without spending quota. Requires Google
+      application default credentials.
 
 Writes docs/validation.md. Never writes credentials anywhere.
 """
@@ -550,6 +558,183 @@ def run_p5() -> dict:
     }
 
 
+# --------------------------------------------- P7: BigQuery dry-run validation
+
+
+def run_p7() -> dict:
+    """Dry-run every query shape BigQuerySampler can emit.
+
+    Dry runs are FREE: BigQuery compiles the query and reports the bytes it
+    would scan without executing it. This catches every class of SQL bug
+    found in this audit (invalid RAND(seed), view-prefix wildcard, bare
+    UNION ALL) at zero cost, and prices real runs before paying for them.
+    """
+    import os
+
+    try:
+        from google.cloud import bigquery
+
+        from reporoulette.samplers.bigquery_sampler import BigQuerySampler
+    except ImportError as e:
+        return {"skipped": True, "reason": f"BigQuery deps not installed: {e}"}
+
+    project_id = os.environ.get("GOOGLE_PROJECT_ID", "in-electoral-rolls")
+    try:
+        sampler = BigQuerySampler(
+            seed=42, project_id=project_id, log_level=logging.WARNING
+        )
+    except Exception as e:
+        return {"skipped": True, "reason": str(e)}
+
+    day_data = {"sample_day": "20240101", "repo_count": 1000, "samples_to_take": 5}
+    day_queries = [
+        sampler._build_day_query(day_data, i, years_back=5) for i in range(2)
+    ]
+    queries = {
+        "count (5 days, pruned wildcard)": sampler._build_count_query(5, 5),
+        "day sample": day_queries[0],
+        "combined (2 days, UNION ALL)": sampler._combine_day_queries(
+            day_queries, n_samples=10
+        ),
+        "active (no languages)": sampler._build_active_query(
+            "'2024-01-01'", "CURRENT_TIMESTAMP()", None, 10
+        ),
+        "active (languages)": sampler._build_active_query(
+            "'2024-01-01'", "CURRENT_TIMESTAMP()", ["Python", "Go"], 10
+        ),
+        "get_languages": sampler._build_languages_query(
+            ["tensorflow/tensorflow", "pytorch/pytorch"]
+        ),
+    }
+
+    results: dict = {"skipped": False, "queries": {}}
+    all_valid = True
+    for name, query in queries.items():
+        try:
+            job = sampler.client.query(
+                query, job_config=bigquery.QueryJobConfig(dry_run=True)
+            )
+            gb = (job.total_bytes_processed or 0) / 1e9
+            results["queries"][name] = {"valid": True, "gb": gb}
+        except Exception as e:
+            results["queries"][name] = {"valid": False, "error": str(e)[:200]}
+            all_valid = False
+    results["all_valid_pass"] = all_valid
+    summary = ", ".join(
+        f"{name}: {q['gb']:.2f}GB" if q["valid"] else f"{name}: INVALID"
+        for name, q in results["queries"].items()
+    )
+    print(f"[P7] dry runs ($0): {summary}")
+    return results
+
+
+# ------------------------------------------------- P6: live API contract checks
+
+
+def run_p6(token: str) -> dict:
+    """Cheap live checks that the external interfaces still match the
+    assumptions baked into the samplers.
+    """
+    results: dict = {}
+
+    # (a) GH Archive URL contract: daily files never existed (the bug the
+    # sampler shipped with), hourly files do. Probed on a recent day so the
+    # canary tracks the CURRENT contract.
+    probe_day = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+    daily_code = requests.head(
+        f"https://data.gharchive.org/{probe_day}.json.gz", timeout=30
+    ).status_code
+    hourly_code = requests.head(
+        f"https://data.gharchive.org/{probe_day}-15.json.gz", timeout=30
+    ).status_code
+    results["archive_day"] = probe_day
+    results["daily_status"] = daily_code
+    results["hourly_status"] = hourly_code
+    results["archive_urls_pass"] = daily_code == 404 and hourly_code == 200
+
+    # (b) GH Archive event schema: stream the head of an hourly file and
+    # assert the fields the sampler parses are present and well-formed.
+    def scan_archive(day: str, limit: int) -> tuple[int, int, bool]:
+        checked = 0
+        creations = 0
+        ok = True
+        with requests.get(
+            f"https://data.gharchive.org/{day}-15.json.gz",
+            stream=True,
+            timeout=120,
+        ) as resp:
+            with gzip.GzipFile(fileobj=resp.raw) as fh:
+                for line in fh:
+                    event = json.loads(line)
+                    checked += 1
+                    if not (
+                        isinstance(event.get("type"), str)
+                        and isinstance(event.get("repo", {}).get("name"), str)
+                        and isinstance(event.get("created_at"), str)
+                    ):
+                        ok = False
+                    if is_repo_creation(event):
+                        creations += 1
+                    if checked >= limit:
+                        break
+        return checked, creations, ok
+
+    events_checked, recent_creations, schema_ok = scan_archive(probe_day, 500)
+    results["events_checked"] = events_checked
+    results["creation_events"] = recent_creations
+    results["schema_pass"] = schema_ok and events_checked == 500
+
+    # (b2) Repository CreateEvents left the public events feed with GitHub's
+    # Events API payload change on 2025-10-07 (empirically: thousands/hour
+    # through 2025-09-15, zero from 2025-10-15 on). Verify both sides of the
+    # cutoff so this check flags any future reversal of the upstream change.
+    _, pre_creations, _ = scan_archive("2025-08-15", 50000)
+    results["pre_cutoff_creations"] = pre_creations
+    results["post_cutoff_creations"] = recent_creations
+    results["cutoff_pass"] = pre_creations > 0 and recent_creations == 0
+
+    # (c) /repositories/{id} field contract: the exact keys IDSampler maps
+    # without .get() fallbacks must exist.
+    resp = requests.get(
+        "https://api.github.com/repositories/1",
+        headers={"Authorization": f"token {token}"},
+        timeout=30,
+    )
+    repo = resp.json() if resp.status_code == 200 else {}
+    required = ["name", "full_name", "html_url", "created_at", "updated_at"]
+    results["repo_endpoint_status"] = resp.status_code
+    results["repo_endpoint_pass"] = (
+        resp.status_code == 200
+        and all(k in repo for k in required)
+        and isinstance(repo.get("owner", {}).get("login"), str)
+    )
+
+    # (d) Temporal end-to-end mini-run: the sampler's population claim is
+    # "repos pushed on the sampled day" - verify each returned repo's
+    # pushed_at actually falls inside its sampled day's window.
+    sampler = TemporalSampler(token=token, seed=7, log_level=logging.WARNING)
+    repos = sampler.sample(
+        n_samples=10, days_to_sample=2, min_wait=2.5, max_attempts=15
+    )
+    within = 0
+    for r in repos:
+        day = datetime.strptime(r["sampled_from"], "%Y-%m-%d")
+        pushed = datetime.strptime(r["pushed_at"], "%Y-%m-%dT%H:%M:%SZ")
+        if day <= pushed <= day + timedelta(days=1):
+            within += 1
+    frac = within / len(repos) if repos else 0.0
+    results["temporal_n"] = len(repos)
+    results["temporal_within_window"] = frac
+    results["temporal_pass"] = len(repos) > 0 and frac >= 0.9
+    print(
+        f"[P6] contracts: daily={daily_code} hourly={hourly_code}, "
+        f"creations pre/post cutoff: {results['pre_cutoff_creations']}/"
+        f"{recent_creations}, temporal {len(repos)} repos "
+        f"({100 * frac:.0f}% in window)"
+    )
+    return results
+
+
 # ------------------------------------------------------------------- reporting
 
 
@@ -710,6 +895,61 @@ def write_report(sections: dict) -> None:
                 "",
             ]
 
+    p6 = sections.get("p6")
+    if p6:
+        lines += [
+            "## P6 - Live API contract checks",
+            "",
+            "| Check | Result |",
+            "|---|---|",
+            f"| GH Archive publishes hourly files only (daily URL 404s, "
+            f"hourly 200; probed {p6['archive_day']}) | "
+            f"daily={p6['daily_status']}, hourly={p6['hourly_status']} - "
+            f"{fmt_pass(p6['archive_urls_pass'])} |",
+            f"| Event schema fields used by GHArchiveSampler present | "
+            f"first {p6['events_checked']} events well-formed - "
+            f"{fmt_pass(p6['schema_pass'])} |",
+            f"| Repository CreateEvents ended with GitHub's 2025-10-07 "
+            f"Events API change (present before, absent after) | "
+            f"{p6['pre_cutoff_creations']} in 50k events of 2025-08-15 vs "
+            f"{p6['post_cutoff_creations']} recently - "
+            f"{fmt_pass(p6['cutoff_pass'])} |",
+            f"| /repositories/{{id}} returns the fields IDSampler maps | "
+            f"HTTP {p6['repo_endpoint_status']} - "
+            f"{fmt_pass(p6['repo_endpoint_pass'])} |",
+            f"| Temporal population claim: pushed_at inside the sampled day | "
+            f"{p6['temporal_n']} repos, "
+            f"{100 * p6['temporal_within_window']:.0f}% in window - "
+            f"{fmt_pass(p6['temporal_pass'])} |",
+            "",
+        ]
+
+    p7 = sections.get("p7")
+    if p7:
+        if p7.get("skipped"):
+            lines += [
+                "## P7 - BigQuery dry-run validation",
+                "",
+                f"Skipped: {p7['reason']}",
+                "",
+            ]
+        else:
+            lines += [
+                "## P7 - BigQuery dry-run validation (free)",
+                "",
+                "Every query shape the sampler can emit, compiled by BigQuery "
+                "without execution (dry runs cost nothing and would have "
+                "caught all three SQL-validity bugs in this audit). "
+                "Estimated scan per query:",
+                "",
+                "| Query | Valid | Est. scan |",
+                "|---|---|---|",
+            ]
+            for name, q in p7["queries"].items():
+                scan = f"{q['gb']:.2f} GB" if q["valid"] else q.get("error", "")
+                lines.append(f"| {name} | {fmt_pass(q['valid'])} | {scan} |")
+            lines.append("")
+
     REPORT_PATH.write_text("\n".join(lines))
     print(f"report written to {REPORT_PATH}")
 
@@ -728,6 +968,8 @@ def main() -> None:
     parser.add_argument("--p3", action="store_true")
     parser.add_argument("--p4", action="store_true")
     parser.add_argument("--p5", action="store_true")
+    parser.add_argument("--p6", action="store_true")
+    parser.add_argument("--p7", action="store_true")
     parser.add_argument("--archive-date", default="2023-06-15")
     parser.add_argument("--archive-hour", type=int, default=12)
     parser.add_argument("--seeds", type=int, default=100)
@@ -770,9 +1012,17 @@ def main() -> None:
     if args.all or args.p5:
         sections["p5"] = run_p5()
 
+    if args.all or args.p6:
+        if not token:
+            raise SystemExit("GITHUB_TOKEN is required for --p6")
+        sections["p6"] = run_p6(token)
+
+    if args.all or args.p7:
+        sections["p7"] = run_p7()
+
     sections_path.write_text(json.dumps(sections))
     write_report({k: v for k, v in sections.items() if k != "p2_hits"})
-    for name in ("p1", "p2", "p3", "p5"):
+    for name in ("p1", "p2", "p3", "p5", "p6", "p7"):
         section = sections.get(name)
         if not section or section.get("skipped"):
             continue

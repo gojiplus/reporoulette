@@ -309,8 +309,8 @@ class ValidationTestSuite(unittest.TestCase):
         self.assertIsNotNone(sampler._seed)
 
         query = sampler._build_count_query(days_to_sample=1, years_back=1)
-        self.assertIn("random_dates", query)
-        self.assertIn("FARM_FINGERPRINT", query)
+        self.assertIn("`githubarchive.day.2*`", query)
+        self.assertIn("_TABLE_SUFFIX IN (", query)
         self.assertNotIn("RAND(", query)
 
     def test_github_archive_sampler_structure(self):

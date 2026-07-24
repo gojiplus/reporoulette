@@ -80,16 +80,33 @@ class GHArchiveSampler(BaseSampler):
         repos_per_day: int = 20,
         years_back: int = 10,
         event_types: list[str] | None = None,
+        hours_per_day: int | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Sample repositories by downloading and processing full day's GH Archive files.
+        """Sample repositories from GH Archive's hourly files.
+
+        The population sampled depends on hours_per_day. With the default
+        (None), all 24 hourly files of each sampled day are processed, so
+        each day's population is exactly the repositories with matching
+        events that day. With hours_per_day=H, only H randomly chosen hours
+        are downloaded (H/24 of the bandwidth), and the population becomes
+        repositories with matching events in the sampled hours - repos
+        active in low-traffic hours are then over-represented relative to
+        the full-day population, the same bias structure the per-day cap
+        already introduces across days.
 
         Args:
             n_samples: Target number of repositories to sample
             days_to_sample: Number of random days to sample
             repos_per_day: Maximum repositories to sample per day
             years_back: How many years to look back
-            event_types: Types of GitHub events to consider
+            event_types: Types of GitHub events to consider. Note: GitHub's
+                Events API payload change of 2025-10-07 removed repository
+                CreateEvents from the public feed, so with the default
+                event_types no repository created after that date can be
+                sampled; days after it have an empty population.
+            hours_per_day: Number of random hours (of 24) to download per
+                day; None processes the full day
             **kwargs: Additional filters to apply
 
         Returns:
@@ -98,7 +115,7 @@ class GHArchiveSampler(BaseSampler):
         self.logger.info(
             f"Sampling via archives: n_samples={n_samples}, days_to_sample={days_to_sample}, "
             f"repos_per_day={repos_per_day}, years_back={years_back}, "
-            f"event_types={event_types}"
+            f"event_types={event_types}, hours_per_day={hours_per_day}"
         )
 
         # Set default event types if None provided
@@ -154,8 +171,11 @@ class GHArchiveSampler(BaseSampler):
             # GH Archive publishes hourly files ({date}-{hour}.json.gz);
             # there is no consolidated daily file.
             archive_date = target_date.strftime("%Y-%m-%d")
+            hours = list(range(24))
+            if hours_per_day is not None:
+                hours = sorted(random.sample(hours, min(hours_per_day, 24)))
             hours_processed = 0
-            for hour in range(24):
+            for hour in hours:
                 archive_url = (
                     f"https://data.gharchive.org/{archive_date}-{hour}.json.gz"
                 )
@@ -243,6 +263,18 @@ class GHArchiveSampler(BaseSampler):
                 self.logger.warning(f"No archive hours processed for {day_str}")
                 errors += 1
                 continue
+
+            if (
+                not day_repos
+                and day_events_processed > 0
+                and event_types == ["CreateEvent"]
+            ):
+                self.logger.warning(
+                    f"No repository-creation events in {day_str}: GitHub "
+                    f"removed repository CreateEvents from the public events "
+                    f"feed on 2025-10-07, so days after that date have an "
+                    f"empty population under the default event_types"
+                )
 
             # Randomly sample repositories for this day
             day_repos_list = list(day_repos.values())

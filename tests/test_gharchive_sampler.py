@@ -134,6 +134,29 @@ class TestGHArchiveSampler(unittest.TestCase):
         self.assertEqual(hours, list(range(24)))
 
     @patch("reporoulette.samplers.gh_sampler.requests.get")
+    def test_hours_per_day_limits_downloads(self, mock_get):
+        urls = []
+
+        def record(url, *args, **kwargs):
+            urls.append(url)
+            return archive_response([make_event("owner1/repo1")])
+
+        mock_get.side_effect = record
+
+        self.sampler.gh_sampler(
+            n_samples=1,
+            days_to_sample=1,
+            repos_per_day=1,
+            years_back=1,
+            hours_per_day=3,
+        )
+
+        self.assertEqual(len(urls), 3)
+        hours = [int(re.search(r"-(\d+)\.json\.gz$", u).group(1)) for u in urls]
+        self.assertEqual(len(set(hours)), 3)
+        self.assertTrue(all(0 <= h <= 23 for h in hours))
+
+    @patch("reporoulette.samplers.gh_sampler.requests.get")
     def test_failed_download_counts_attempt_not_success(self, mock_get):
         # First day: all 24 hourly downloads 404; second day succeeds.
         events = [make_event(f"owner{i}/repo{i}") for i in range(3)]

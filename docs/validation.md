@@ -1,6 +1,6 @@
 # Randomization Validation Report
 
-Generated 2026-07-24 10:27 by `scripts/validate_randomization.py`. All tests at alpha = 0.05. Chi-square critical values use the Wilson-Hilferty approximation; KS uses the asymptotic two-sample critical value. Aggregating draws across seeded runs treats draws as independent, which is a good approximation for sample sizes far below the population size.
+Generated 2026-07-24 14:40 by `scripts/validate_randomization.py`. All tests at alpha = 0.05. Chi-square critical values use the Wilson-Hilferty approximation; KS uses the asymptotic two-sample critical value. Aggregating draws across seeded runs treats draws as independent, which is a good approximation for sample sizes far below the population size.
 
 ## P1 - GH Archive ground-truth inclusion test (GHArchiveSampler)
 
@@ -52,3 +52,26 @@ Search-cap coverage: mean fraction of each sampled day's repositories reachable 
 | Same seed, two live runs identical | not verified - second run blocked by the project's BigQuery quota; determinism is covered at the SQL level by the unit suite (same seed produces byte-identical queries and ORDER BY FARM_FINGERPRINT is deterministic) |
 | Duplicate repositories in output | 0 - PASS |
 | Days used / allocation vs day size correlation | 5 days, r = 1.00 |
+
+## P6 - Live API contract checks
+
+| Check | Result |
+|---|---|
+| GH Archive publishes hourly files only (daily URL 404s, hourly 200; probed 2026-07-22) | daily=404, hourly=200 - PASS |
+| Event schema fields used by GHArchiveSampler present | first 500 events well-formed - PASS |
+| Repository CreateEvents ended with GitHub's 2025-10-07 Events API change (present before, absent after) | 1878 in 50k events of 2025-08-15 vs 0 recently - PASS |
+| /repositories/{id} returns the fields IDSampler maps | HTTP 200 - PASS |
+| Temporal population claim: pushed_at inside the sampled day | 100 repos, 100% in window - PASS |
+
+## P7 - BigQuery dry-run validation (free)
+
+Every query shape the sampler can emit, compiled by BigQuery without execution (dry runs cost nothing and would have caught all three SQL-validity bugs in this audit). Estimated scan per query:
+
+| Query | Valid | Est. scan |
+|---|---|---|
+| count (5 days, pruned wildcard) | PASS | 0.52 GB |
+| day sample | PASS | 0.18 GB |
+| combined (2 days, UNION ALL) | PASS | 0.18 GB |
+| active (no languages) | PASS | 99.45 GB |
+| active (languages) | PASS | 99.59 GB |
+| get_languages | PASS | 0.20 GB |

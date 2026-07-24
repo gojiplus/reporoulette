@@ -49,9 +49,32 @@ class TestBigQuerySamplerQueries(unittest.TestCase):
             self.assertNotIn("RAND(", query, f"{name} query still uses RAND(")
 
     def test_queries_are_seeded(self):
-        for name, query in self.all_queries(self.sampler).items():
-            self.assertIn("FARM_FINGERPRINT", query, f"{name} query is not seeded")
-            self.assertIn("42", query, f"{name} query does not embed the seed")
+        # The count query is seeded via client-side day selection (covered by
+        # the same/different-seed tests); day and combined queries embed the
+        # seed in their FARM_FINGERPRINT ordering.
+        queries = self.all_queries(self.sampler)
+        for name in ("day", "combined"):
+            self.assertIn("FARM_FINGERPRINT", queries[name], f"{name} not seeded")
+            self.assertIn("42", queries[name], f"{name} does not embed the seed")
+
+    def test_count_query_prunes_wildcard_tables(self):
+        # Day literals must be inlined so BigQuery prunes the wildcard scan;
+        # computing days in SQL forced a ~0.2 TB scan of every day table.
+        query = self.all_queries(self.sampler)["count"]
+        self.assertIn("_TABLE_SUFFIX IN (", query)
+        self.assertNotIn("GENERATE_ARRAY", query)
+
+    def test_active_and_languages_queries_valid_and_seeded(self):
+        for languages in (None, ["Python", "Go"]):
+            query = self.sampler._build_active_query(
+                "'2024-01-01'", "CURRENT_TIMESTAMP()", languages, 10
+            )
+            self.assertNotIn("RAND(", query)
+            self.assertIn("FARM_FINGERPRINT", query)
+            self.assertIn("42", query)
+        lang_query = self.sampler._build_languages_query(["owner/repo"])
+        self.assertIn("'owner/repo'", lang_query)
+        self.assertIn("GROUP BY", lang_query)
 
     def test_count_query_wildcard_excludes_views(self):
         # Regression: the githubarchive.day dataset contains views

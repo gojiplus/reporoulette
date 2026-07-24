@@ -173,4 +173,11 @@ uv run pre-commit autoupdate
   silently skips the real request.
 - `IDSampler.max_id` defaults to a static 850,000,000; repositories created
   after that ID was measured are unreachable until the default is raised or
-  made self-updating.
+  made self-updating (live validation measured the real ceiling at ~1.31B
+  in July 2026 - the default misses ~35% of the ID space).
+- GitHub's Events API payload change of 2025-10-07 removed repository
+  CreateEvents from the public feed: GHArchiveSampler's default population
+  is empty for days after that date.
+- BigQuery cost control: `scripts/validate_randomization.py --p7` dry-runs
+  every query shape for free and reports the bytes each would scan; use it
+  before any paid BigQuery run.
