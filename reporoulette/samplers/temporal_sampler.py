@@ -13,6 +13,9 @@ class TemporalSampler(BaseSampler):
 
     This sampler selects random days within a specified date range,
     weights them by repository count, and retrieves repositories with proportional sampling.
+    The population is repositories *pushed* on the sampled days, so the sample
+    is biased toward actively maintained repositories, and the Search API's
+    1,000-results-per-query cap limits coverage on high-activity days.
     """
 
     def __init__(
@@ -20,7 +23,7 @@ class TemporalSampler(BaseSampler):
         token: str | None = None,
         start_date: datetime | str | None = None,
         end_date: datetime | str | None = None,
-        rate_limit_safety: int = 100,
+        rate_limit_safety: int = 5,
         seed: int | None = None,
         years_back: int = 10,
         log_level: int = logging.INFO,
@@ -31,7 +34,9 @@ class TemporalSampler(BaseSampler):
             token: GitHub Personal Access Token
             start_date: Start of date range to sample from
             end_date: End of date range to sample from
-            rate_limit_safety: Stop when this many API requests remain
+            rate_limit_safety: Stop when this many search API requests remain.
+                The search bucket allows only 30 requests/minute, so this must
+                stay below 30 (a safety of 100 would block every request).
             seed: Random seed for reproducibility
             years_back: How many years back to sample from (if start_date not specified)
             log_level: Logging level (default: INFO)
@@ -148,11 +153,21 @@ class TemporalSampler(BaseSampler):
         # Construct query for repositories updated in this time period
         query_parts = [f"pushed:{start_time_str}..{end_time_str}"]
 
-        # Add language filter if specified
+        # Add language filter if specified. Multiple language: qualifiers are
+        # ANDed by the search API (matching nothing), so with more than one
+        # language the qualifier is omitted and filtering happens client-side
+        # in _filter_repos.
         if language:
             query_parts.append(f"language:{language}")
         elif "languages" in kwargs and kwargs["languages"]:
-            query_parts.append(f"language:{kwargs['languages'][0]}")
+            languages = kwargs["languages"]
+            if len(languages) == 1:
+                query_parts.append(f"language:{languages[0]}")
+            else:
+                self.logger.warning(
+                    f"Multiple languages {languages}: querying without a "
+                    f"language qualifier and filtering client-side"
+                )
 
         # Add star filter if specified
         if min_stars > 0:
@@ -174,18 +189,23 @@ class TemporalSampler(BaseSampler):
         min_stars: int = 0,
         min_size_kb: int = 0,
         language: str | None = None,
+        max_attempts: int = 100,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Sample repositories by randomly selecting days with weighting based on repo count.
 
         Args:
-            n_samples: Target number of repositories to collect
+            n_samples: Target number of repositories to collect. Collection
+                proceeds a full search page at a time, so the returned list
+                can exceed this target (it is a lower bound, not an exact
+                size).
             days_to_sample: Number of random days to initially sample for count assessment
             per_page: Number of results per page (max 100)
             min_wait: Minimum wait time between API requests
             min_stars: Minimum number of stars (0 for no filtering)
             min_size_kb: Minimum repository size in KB (0 for no filtering)
             language: Programming language to filter by
+            max_attempts: Maximum collection-loop iterations before giving up
             **kwargs: Additional filters to apply
 
         Returns:
@@ -316,9 +336,15 @@ class TemporalSampler(BaseSampler):
             self.logger.info(f"  {day_str}: {count} repositories")
 
         # Step 4: Sample repositories from days based on weighted distribution
-        while len(all_repos) < n_samples:
+        # iterations counts every pass (including skipped days) so the loop is
+        # bounded and the rate-limit check cannot be starved by `continue`;
+        # self.attempts keeps counting actual API requests for success_rate.
+        iterations = 0
+        while len(all_repos) < n_samples and iterations < max_attempts:
+            iterations += 1
+
             # Check if we're approaching rate limit
-            if self.attempts % 5 == 0:
+            if iterations % 5 == 0:
                 remaining = self._check_rate_limit("search")
                 if remaining <= self.rate_limit_safety:
                     self.logger.warning(
@@ -446,6 +472,12 @@ class TemporalSampler(BaseSampler):
             except Exception as e:
                 self.logger.error(f"Error sampling day {day_str}: {str(e)}")
                 time.sleep(min_wait * 2)
+
+        if len(all_repos) < n_samples and iterations >= max_attempts:
+            self.logger.warning(
+                f"Stopped after max_attempts={max_attempts} iterations with "
+                f"{len(all_repos)}/{n_samples} repositories collected"
+            )
 
         # Report summary
         elapsed_time = time.time() - start_time

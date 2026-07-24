@@ -135,6 +135,67 @@ class TestIDSampler(unittest.TestCase):
             f"Default max_id {sampler.max_id} should be greater than old default {old_default}",
         )
 
+    @patch("time.sleep")
+    @patch("requests.get")
+    def test_probing_uniformity_smoke(self, mock_get, _mock_sleep):
+        """Statistical smoke test: probed IDs are uniform over the ID space.
+
+        Mock GitHub so exactly 10% of IDs exist (id % 10 == 0), draw 1000
+        probes with a fixed seed, and check the measured success rate plus a
+        chi-square uniformity test over 10 deciles. Fixed seed makes this
+        fully deterministic.
+        """
+        sampler = IDSampler(
+            seed=7, min_id=1, max_id=1_000_000, log_level=logging.WARNING
+        )
+        sampler.logger = MagicMock()
+        sampler._check_rate_limit = MagicMock(return_value=100000)
+
+        probed = []
+
+        def fake_get(url, *args, **kwargs):
+            repo_id = int(url.rstrip("/").rsplit("/", 1)[1])
+            probed.append(repo_id)
+            response = MagicMock()
+            if repo_id % 10 == 0:
+                response.status_code = 200
+                response.json.return_value = {
+                    "id": repo_id,
+                    "name": f"repo{repo_id}",
+                    "full_name": f"owner{repo_id}/repo{repo_id}",
+                    "owner": {"login": f"owner{repo_id}"},
+                    "html_url": f"https://github.com/owner{repo_id}/repo{repo_id}",
+                    "created_at": "2023-01-01T12:00:00Z",
+                    "updated_at": "2023-01-02T12:00:00Z",
+                }
+            else:
+                response.status_code = 404
+                response.text = "Not Found"
+            return response
+
+        mock_get.side_effect = fake_get
+
+        sampler.sample(n_samples=1000, max_attempts=1000, min_wait=0)
+
+        self.assertEqual(sampler.attempts, 1000)
+        self.assertGreaterEqual(sampler.success_rate, 7.0)
+        self.assertLessEqual(sampler.success_rate, 13.0)
+
+        # Chi-square goodness-of-fit over 10 equal-width deciles;
+        # critical value for df=9 at alpha=0.05 is 16.92 (no scipy needed).
+        buckets = [0] * 10
+        span = (sampler.max_id - sampler.min_id + 1) / 10
+        for repo_id in probed:
+            buckets[min(int((repo_id - sampler.min_id) / span), 9)] += 1
+        expected = len(probed) / 10
+        chi_sq = sum((obs - expected) ** 2 / expected for obs in buckets)
+        self.assertLess(
+            chi_sq,
+            16.92,
+            f"Probed IDs deviate from uniform: chi-square={chi_sq:.2f}, "
+            f"buckets={buckets}",
+        )
+
     def test_filter_during_collection(self):
         """Test that _passes_filters correctly filters repositories."""
         # Test the filter logic directly

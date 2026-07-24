@@ -167,39 +167,47 @@ class ValidationTestSuite(unittest.TestCase):
                 )
 
     def test_sampling_reproducibility(self):
-        """Test that sampling is reproducible with same seed."""
-        mock_repo = {
-            "id": 12345,
-            "name": "test-repo",
-            "full_name": "test-owner/test-repo",
-            "owner": {"login": "test-owner"},
-            "html_url": "https://github.com/test-owner/test-repo",
-        }
+        """Test that sampling is reproducible with same seed.
 
-        with patch("requests.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = mock_repo
-            mock_get.return_value = mock_response
+        Uses a deterministic mock keyed off the probed repository ID, so
+        the test exercises the real seeded RNG instead of patching it out.
+        """
 
-            # Create two samplers with same seed
-            sampler1 = IDSampler(seed=42, log_level=logging.WARNING)
-            sampler2 = IDSampler(seed=42, log_level=logging.WARNING)
+        def fake_get(url, *args, **kwargs):
+            repo_id = int(url.rstrip("/").rsplit("/", 1)[1])
+            response = MagicMock()
+            if repo_id % 3 == 0:
+                response.status_code = 200
+                response.json.return_value = {
+                    "id": repo_id,
+                    "name": f"repo{repo_id}",
+                    "full_name": f"owner{repo_id}/repo{repo_id}",
+                    "owner": {"login": f"owner{repo_id}"},
+                    "html_url": f"https://github.com/owner{repo_id}/repo{repo_id}",
+                    "created_at": "2023-01-01T12:00:00Z",
+                    "updated_at": "2023-01-02T12:00:00Z",
+                }
+            else:
+                response.status_code = 404
+                response.text = "Not Found"
+            return response
 
-            sampler1._check_rate_limit = MagicMock(return_value=1000)
-            sampler2._check_rate_limit = MagicMock(return_value=1000)
+        def run_once():
+            # Samplers seed the global random module, so construct each
+            # sampler immediately before sampling.
+            sampler = IDSampler(seed=42, log_level=logging.WARNING)
+            sampler._check_rate_limit = MagicMock(return_value=1000)
+            return sampler.sample(n_samples=5, max_attempts=100, min_wait=0)
 
-            # Mock random.randint to return predictable values
-            with patch(
-                "random.randint", side_effect=[100, 100]
-            ):  # Same values for both calls
-                results1 = sampler1.sample(n_samples=1, max_attempts=1)
-                results2 = sampler2.sample(n_samples=1, max_attempts=1)
+        with patch("requests.get", side_effect=fake_get), patch("time.sleep"):
+            results1 = run_once()
+            results2 = run_once()
 
-            # Results should be identical with same seed
-            self.assertEqual(len(results1), len(results2))
-            if results1 and results2:
-                self.assertEqual(results1[0]["full_name"], results2[0]["full_name"])
+        self.assertGreater(len(results1), 0)
+        self.assertEqual(
+            [r["full_name"] for r in results1],
+            [r["full_name"] for r in results2],
+        )
 
     def test_success_rate_calculation(self):
         """Test success rate calculation accuracy."""
@@ -286,19 +294,24 @@ class ValidationTestSuite(unittest.TestCase):
         random_date = sampler._random_date()
         self.assertTrue(start_date <= random_date <= end_date)
 
-    def test_bigquery_sampler_availability(self):
-        """Test BigQuery sampler initialization and availability."""
-        if self.bq_sampler is None:
-            self.skipTest("BigQuery credentials not available")
+    def test_bigquery_sampler_query_structure(self):
+        """Test BigQuery query generation without credentials.
 
-        # Test initialization
-        self.assertIsNotNone(self.bq_sampler.client)
-        self.assertIsNotNone(self.bq_sampler._seed)
+        RAND(seed) is invalid GoogleSQL; queries must use the seeded
+        FARM_FINGERPRINT ordering instead.
+        """
+        with (
+            patch("reporoulette.samplers.bigquery_sampler.BIGQUERY_AVAILABLE", True),
+            patch.object(BigQuerySampler, "_init_client"),
+        ):
+            sampler = BigQuerySampler(seed=self.test_seed, log_level=logging.WARNING)
 
-        # Test that queries can be built without errors
-        query = self.bq_sampler._build_count_query(days_to_sample=1, years_back=1)
-        self.assertIn("DECLARE days_to_sample", query)
-        self.assertIn("random_dates", query)
+        self.assertIsNotNone(sampler._seed)
+
+        query = sampler._build_count_query(days_to_sample=1, years_back=1)
+        self.assertIn("`githubarchive.day.2*`", query)
+        self.assertIn("_TABLE_SUFFIX IN (", query)
+        self.assertNotIn("RAND(", query)
 
     def test_github_archive_sampler_structure(self):
         """Test GitHub Archive sampler data processing."""
