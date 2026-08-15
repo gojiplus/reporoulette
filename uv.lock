@@ -986,17 +986,6 @@ bigquery = [
     { name = "google-auth" },
     { name = "google-cloud-bigquery" },
 ]
-dev = [
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-docs = [
-    { name = "furo" },
-    { name = "myst-parser" },
-    { name = "sphinx" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -1007,21 +996,19 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+docs = [
+    { name = "furo" },
+    { name = "myst-parser" },
+    { name = "sphinx" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "furo", marker = "extra == 'docs'", specifier = ">=2023.0.0" },
     { name = "google-auth", marker = "extra == 'bigquery'", specifier = ">=1.30.0" },
     { name = "google-cloud-bigquery", marker = "extra == 'bigquery'", specifier = ">=2.0.0" },
-    { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=0.15.0" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "requests", specifier = ">=2.25.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
-    { name = "sphinx", marker = "extra == 'docs'", specifier = ">=4.0.0" },
 ]
-provides-extras = ["bigquery", "docs", "dev", "all"]
+provides-extras = ["bigquery", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1031,6 +1018,11 @@ dev = [
     { name = "pytest", specifier = ">=7.0.0" },
     { name = "pytest-cov", specifier = ">=3.0.0" },
     { name = "ruff", specifier = ">=0.8.0" },
+]
+docs = [
+    { name = "furo", specifier = ">=2023.0.0" },
+    { name = "myst-parser", specifier = ">=0.15.0" },
+    { name = "sphinx", specifier = ">=4.0.0" },
 ]
 
 [[package]]
