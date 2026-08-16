@@ -1,5 +1,5 @@
 [build-system]
-requires = ["uv_build>=0.9.11,<0.10.0"]
+requires = ["uv_build>=0.9.11,<0.12.0"]
 build-backend = "uv_build"
 
 [project]
@@ -7,7 +7,8 @@ name = "reporoulette"
 version = "0.6.0"
 description = "Random sampling of GitHub repositories using multiple methods"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Gaurav Sood", email = "gsood07@example.com"}
 ]
@@ -25,7 +26,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -46,18 +46,7 @@ bigquery = [
     "google-cloud-bigquery>=2.0.0",
     "google-auth>=1.30.0",
 ]
-docs = [
-    "sphinx>=4.0.0",
-    "furo>=2023.0.0",
-    "myst-parser>=0.15.0",
-]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=3.0.0",
-    "ruff>=0.8.0",
-    "pre-commit>=3.0.0",
-]
-all = []  # Install with: pip install reporoulette[bigquery,docs,dev]
+all = []  # Install with: pip install reporoulette[bigquery]
 
 [project.urls]
 "Homepage" = "https://github.com/gojiplus/reporoulette"
@@ -166,6 +155,11 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [dependency-groups]
+docs = [
+    "sphinx>=4.0.0",
+    "furo>=2023.0.0",
+    "myst-parser>=0.15.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",
@@ -249,7 +243,11 @@ reportUnnecessaryIsInstance = "warning"
 reportUnnecessaryCast = "warning"
 reportUnnecessaryComparison = "warning"
 reportUnnecessaryContains = "warning"
-reportImplicitStringConcatenation = "warning"
+# Off because it fights the formatter, not because the rule is wrong: `ruff
+# format` splits a long message into adjacent f-string literals, which is
+# exactly what this reports. 32 of the 121 strict-mode warnings here were
+# ruff's own output.
+reportImplicitStringConcatenation = "none"
 reportIncompatibleMethodOverride = "error"
 reportIncompatibleVariableOverride = "error"
 reportOverlappingOverload = "error"
