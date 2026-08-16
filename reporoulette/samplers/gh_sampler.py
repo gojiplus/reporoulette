@@ -136,7 +136,7 @@ class GHArchiveSampler(BaseSampler):
         )
 
         # Generate random days
-        random_days = []
+        random_days: list[datetime] = []
         now = datetime.now()
 
         for _ in range(days_to_sample):
@@ -150,7 +150,9 @@ class GHArchiveSampler(BaseSampler):
             random_days.append(target_date)
 
         # Process each random day
-        all_repos = {}  # Use dict to avoid duplicates
+        # Keyed by full_name to avoid duplicates. Annotated because the return
+        # value and every log line downstream inherit its type.
+        all_repos: dict[str, dict[str, Any]] = {}
         processed_days = 0
         errors = 0
         self.attempts = 0
@@ -162,7 +164,7 @@ class GHArchiveSampler(BaseSampler):
             day_str = target_date.strftime("%Y-%m-%d")
             self.logger.info(f"Processing day {i + 1}/{days_to_sample}: {day_str}")
 
-            day_repos = {}
+            day_repos: dict[str, dict[str, Any]] = {}
             day_events_processed = 0
             day_events_skipped = 0
             day_events_error = 0

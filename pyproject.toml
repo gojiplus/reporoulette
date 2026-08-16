@@ -243,7 +243,11 @@ reportUnnecessaryIsInstance = "warning"
 reportUnnecessaryCast = "warning"
 reportUnnecessaryComparison = "warning"
 reportUnnecessaryContains = "warning"
-reportImplicitStringConcatenation = "warning"
+# Off because it fights the formatter, not because the rule is wrong: `ruff
+# format` splits a long message into adjacent f-string literals, which is
+# exactly what this reports. 32 of the 121 strict-mode warnings here were
+# ruff's own output.
+reportImplicitStringConcatenation = "none"
 reportIncompatibleMethodOverride = "error"
 reportIncompatibleVariableOverride = "error"
 reportOverlappingOverload = "error"

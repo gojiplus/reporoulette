@@ -9,17 +9,17 @@ from .bq_utils import execute_query, format_timestamp_query
 
 if TYPE_CHECKING:
     from google.cloud import (
-        bigquery,  # pyright: ignore[reportMissingImports,reportAttributeAccessIssue]
+        bigquery,
     )
-    from google.oauth2 import service_account  # pyright: ignore[reportMissingImports]
+    from google.oauth2 import service_account
 
 # Runtime imports with fallback
 bigquery = None
 service_account = None
 _bigquery_available = False
 try:
-    from google.cloud import bigquery  # type: ignore[import-untyped]
-    from google.oauth2 import service_account  # type: ignore[import-untyped]
+    from google.cloud import bigquery
+    from google.oauth2 import service_account
 
     _bigquery_available = True
 except ImportError:
@@ -264,7 +264,7 @@ class BigQuerySampler(BaseSampler):
             f"Found {len(day_counts)} days with {total_repos} total repositories"
         )
 
-        day_queries = []
+        day_queries: list[str] = []
         for i, day in enumerate(day_counts):
             if day.get("samples_to_take", 0) <= 0:
                 continue

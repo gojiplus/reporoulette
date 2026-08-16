@@ -228,14 +228,17 @@ class TemporalSampler(BaseSampler):
             )
 
         # Initialize variables
-        all_repos = []
-        period_data = {}  # Maps periods to their repo counts and first page data
+        all_repos: list[dict[str, Any]] = []
+        # Maps a day to its repo count and formatted label. Annotated because
+        # everything downstream -- valid_days, weights, top_days -- derives its
+        # type from here, so one bare {} made four collections Unknown.
+        period_data: dict[datetime, dict[str, Any]] = {}
         self.attempts: int = 0
         self.success_count: int = 0
         start_time = time.time()
 
         # Generate random days for initial sampling
-        initial_days = []
+        initial_days: list[datetime] = []
         for _ in range(days_to_sample):
             random_dt = self._random_date()
             initial_days.append(random_dt)
@@ -422,7 +425,7 @@ class TemporalSampler(BaseSampler):
                         )
 
                         # Process repos to match our standard format
-                        period_repos = []
+                        period_repos: list[dict[str, Any]] = []
                         for repo in repos:
                             # Skip repos we already have
                             if any(
