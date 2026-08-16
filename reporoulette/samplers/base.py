@@ -209,7 +209,7 @@ class BaseSampler(ABC):
         Returns:
             Dictionary with authorization headers
         """
-        headers = {}
+        headers: dict[str, str] = {}
         if self.token:
             headers["Authorization"] = f"token {self.token}"
         return headers
