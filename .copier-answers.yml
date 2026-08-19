@@ -1,0 +1,12 @@
+# Managed by copier — records template version for `copier update`. Do not edit.
+_commit: v1.0.1
+_src_path: gh:gojiplus/py-canon
+author_email: gsood07@gmail.com
+author_name: Gaurav Sood
+coverage_floor: 76
+default_branch: main
+description: Random sampling of GitHub repositories using multiple methods
+needs_cli: false
+org: gojiplus
+package_name: reporoulette
+project_name: reporoulette

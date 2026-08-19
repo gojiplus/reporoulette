@@ -67,9 +67,7 @@ start_date = end_date - timedelta(days=90)
 
 # Initialize the sampler
 sampler = TemporalSampler(
-    token="your_github_token",
-    start_date=start_date,
-    end_date=end_date
+    token="your_github_token", start_date=start_date, end_date=end_date
 )
 
 # Get 100 random repositories
@@ -79,7 +77,7 @@ repos = sampler.sample(n_samples=100)
 filtered_repos = sampler.sample(
     n_samples=50,
     min_stars=10,
-    language="python"  # Note: single language, not list
+    language="python",  # Note: single language, not list
 )
 ```
 
@@ -117,22 +115,18 @@ from reporoulette import BigQuerySampler
 sampler = BigQuerySampler(
     credentials_path="path/to/your-service-account-key.json",
     project_id="your-gcp-project-id",
-    seed=42
+    seed=42,
 )
 
 # Sample active repositories with commits in the last year
 active_repos = sampler.sample(
     n_samples=50,
     population="active",
-    languages=["Python", "JavaScript"]  # Optional language filter
+    languages=["Python", "JavaScript"],  # Optional language filter
 )
 
 # Sample repositories across random days
-random_repos = sampler.sample_by_day(
-    n_samples=50,
-    days_to_sample=10,
-    years_back=5
-)
+random_repos = sampler.sample_by_day(n_samples=50, days_to_sample=10, years_back=5)
 
 # Get language information for sampled repositories
 languages = sampler.get_languages(random_repos)
@@ -140,7 +134,7 @@ languages = sampler.get_languages(random_repos)
 # Print results
 for repo in random_repos:
     print(f"Repository: {repo['full_name']}")
-    repo_languages = languages.get(repo['full_name'], [])
+    repo_languages = languages.get(repo["full_name"], [])
     if repo_languages:
         print(f"Primary language: {repo_languages[0]['language']}")
     print("---")
@@ -169,11 +163,15 @@ sampler = GHArchiveSampler(seed=42)  # Set seed for reproducibility
 
 # Sample repositories
 repos = sampler.sample(
-    n_samples=100,           # Number of repositories to sample
-    days_to_sample=5,        # Number of random days to sample from
-    repos_per_day=20,        # Repositories to sample per day
-    years_back=2,            # How many years to look back
-    event_types=["PushEvent", "CreateEvent", "PullRequestEvent"]  # Event types to consider
+    n_samples=100,  # Number of repositories to sample
+    days_to_sample=5,  # Number of random days to sample from
+    repos_per_day=20,  # Repositories to sample per day
+    years_back=2,  # How many years to look back
+    event_types=[
+        "PushEvent",
+        "CreateEvent",
+        "PullRequestEvent",
+    ],  # Event types to consider
 )
 
 # Access results
