@@ -144,7 +144,7 @@ ignore = [
 "__init__.py" = ["E402", "F401", "F403", "F811"]
 "tests/*" = ["D", "PLR2004", "PLC0415"]  # Disable docstring, magic number, and import location checks for tests
 "scripts/*" = ["D", "PLR2004", "PLC0415", "PLR0912", "PLR0915"]  # Same relaxations for maintenance scripts
-"reporoulette/samplers/*" = ["PLR0912", "PLR0913", "PLR0915"]  # Allow complex samplers
+"reporoulette/samplers/*" = ["PLR0912", "PLR0913", "PLR0915", "PLR0917"]  # Allow complex samplers
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
