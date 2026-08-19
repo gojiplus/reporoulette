@@ -2,7 +2,7 @@ import logging
 import os
 import unittest
 from collections import Counter
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -275,15 +275,15 @@ class ValidationTestSuite(unittest.TestCase):
     def test_temporal_sampler_date_handling(self):
         """Test temporal sampler's date generation and formatting."""
         # Test date range generation
-        start_date = datetime(2023, 1, 1)
-        end_date = datetime(2023, 1, 31)
+        start_date = datetime(2023, 1, 1, tzinfo=UTC)
+        end_date = datetime(2023, 1, 31, tzinfo=UTC)
 
         sampler = TemporalSampler(
             start_date=start_date, end_date=end_date, seed=42, log_level=logging.WARNING
         )
 
         # Test date formatting
-        test_date = datetime(2023, 1, 15, 14, 30, 0)
+        test_date = datetime(2023, 1, 15, 14, 30, 0, tzinfo=UTC)
         start_str, end_str = sampler._format_date_for_query(test_date)
 
         # Should format to beginning and end of day
@@ -344,24 +344,21 @@ class StatisticalValidationTests(unittest.TestCase):
 
     def _generate_test_repository_data(self) -> list[dict[str, Any]]:
         """Generate test repository data with known distributions."""
-        repos = []
         languages = ["Python", "JavaScript", "Java", "Go", "Rust"] * 4
 
-        for i in range(20):
-            repos.append(
-                {
-                    "full_name": f"owner{i}/repo{i}",
-                    "name": f"repo{i}",
-                    "owner": f"owner{i}",
-                    "language": languages[i],
-                    "stargazers_count": i * 10,  # Increasing star pattern
-                    "forks_count": i * 2,
-                    "created_at": f"2023-01-{(i % 30) + 1:02d}T12:00:00Z",
-                    "size": i * 100,  # KB
-                }
-            )
-
-        return repos
+        return [
+            {
+                "full_name": f"owner{i}/repo{i}",
+                "name": f"repo{i}",
+                "owner": f"owner{i}",
+                "language": languages[i],
+                "stargazers_count": i * 10,  # Increasing star pattern
+                "forks_count": i * 2,
+                "created_at": f"2023-01-{(i % 30) + 1:02d}T12:00:00Z",
+                "size": i * 100,  # KB
+            }
+            for i in range(20)
+        ]
 
     def test_language_distribution_analysis(self):
         """Test language distribution analysis for bias detection."""
@@ -370,7 +367,7 @@ class StatisticalValidationTests(unittest.TestCase):
         # Should have relatively even distribution (4 of each language)
         expected_count = len(self.test_repos) // len(language_counts)
 
-        for _language, count in language_counts.items():
+        for count in language_counts.values():
             # Allow some variance but detect major skew
             self.assertGreaterEqual(count, expected_count - 1)
             self.assertLessEqual(count, expected_count + 1)

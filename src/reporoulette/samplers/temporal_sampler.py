@@ -1,7 +1,9 @@
+"""Sampling repositories created in randomly chosen time windows."""
+
 import logging
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..logging_config import get_logger
@@ -9,10 +11,11 @@ from .base import HTTP_OK, BaseSampler
 
 
 class TemporalSampler(BaseSampler):
-    """Sample repositories by randomly selecting days and fetching repos updated in those periods.
+    """Sample repositories by randomly picking days and fetching repos pushed then.
 
     This sampler selects random days within a specified date range,
-    weights them by repository count, and retrieves repositories with proportional sampling.
+    weights them by repository count, and retrieves repositories with
+    proportional sampling.
     The population is repositories *pushed* on the sampled days, so the sample
     is biased toward actively maintained repositories, and the Search API's
     1,000-results-per-query cap limits coverage on high-activity days.
@@ -51,25 +54,30 @@ class TemporalSampler(BaseSampler):
         if seed is not None:
             random.seed(seed)
             self._seed = seed
-            self.logger.info(f"Random seed set to: {seed}")
+            self.logger.info("Random seed set to: %s", seed)
         else:
             self._seed = None
 
+        # GitHub search qualifiers are UTC; naive inputs are assumed UTC so
+        # user-supplied dates and the aware default stay comparable.
+        def as_utc(value: datetime) -> datetime:
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
+
         # Default to current time for end_date if not specified
         if end_date is None:
-            self.end_date: datetime = datetime.now()
+            self.end_date: datetime = datetime.now(UTC)
         elif isinstance(end_date, str):
-            self.end_date = datetime.fromisoformat(end_date)
+            self.end_date = as_utc(datetime.fromisoformat(end_date))
         else:
-            self.end_date = end_date
+            self.end_date = as_utc(end_date)
 
         # Use years_back parameter instead of fixed 90 days
         if start_date is None:
             self.start_date: datetime = self.end_date - timedelta(days=365 * years_back)
         elif isinstance(start_date, str):
-            self.start_date = datetime.fromisoformat(start_date)
+            self.start_date = as_utc(datetime.fromisoformat(start_date))
         else:
-            self.start_date = start_date
+            self.start_date = as_utc(start_date)
 
         # Ensure dates have no time component for consistent day-level sampling
         self.start_date = self.start_date.replace(
@@ -88,9 +96,10 @@ class TemporalSampler(BaseSampler):
         time_delta = self.end_date - self.start_date
 
         self.logger.info(
-            f"Initialized TemporalSampler with date range: "
-            f"{self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')} "
-            f"({time_delta.days} days)"
+            "Initialized TemporalSampler with date range: %s to %s (%s days)",
+            self.start_date.strftime("%Y-%m-%d"),
+            self.end_date.strftime("%Y-%m-%d"),
+            time_delta.days,
         )
 
         # Initialize tracking variables
@@ -162,14 +171,15 @@ class TemporalSampler(BaseSampler):
         # in _filter_repos.
         if language:
             query_parts.append(f"language:{language}")
-        elif "languages" in kwargs and kwargs["languages"]:
+        elif kwargs.get("languages"):
             languages = kwargs["languages"]
             if len(languages) == 1:
                 query_parts.append(f"language:{languages[0]}")
             else:
                 self.logger.warning(
-                    f"Multiple languages {languages}: querying without a "
-                    f"language qualifier and filtering client-side"
+                    "Multiple languages %s: querying without a language qualifier "
+                    "and filtering client-side",
+                    languages,
                 )
 
         # Add star filter if specified
@@ -195,14 +205,15 @@ class TemporalSampler(BaseSampler):
         max_attempts: int = 100,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Sample repositories by randomly selecting days with weighting based on repo count.
+        """Sample repositories from random days, weighted by each day's repo count.
 
         Args:
             n_samples: Target number of repositories to collect. Collection
                 proceeds a full search page at a time, so the returned list
                 can exceed this target (it is a lower bound, not an exact
                 size).
-            days_to_sample: Number of random days to initially sample for count assessment
+            days_to_sample: Number of random days to initially sample for
+                count assessment
             per_page: Number of results per page (max 100)
             min_wait: Minimum wait time between API requests
             min_stars: Minimum number of stars (0 for no filtering)
@@ -215,9 +226,15 @@ class TemporalSampler(BaseSampler):
             List of repository data
         """
         self.logger.info(
-            f"Starting weighted temporal sampling: days_to_sample={days_to_sample}, "
-            f"n_samples={n_samples}, per_page={per_page}, "
-            f"min_stars={min_stars}, min_size_kb={min_size_kb}, language={language or 'None'}"
+            "Starting weighted temporal sampling: days_to_sample=%s, "
+            "n_samples=%s, per_page=%s, min_stars=%s, min_size_kb=%s, "
+            "language=%s",
+            days_to_sample,
+            n_samples,
+            per_page,
+            min_stars,
+            min_size_kb,
+            language or "None",
         )
 
         if self.token:
@@ -246,17 +263,21 @@ class TemporalSampler(BaseSampler):
         # Sort chronologically for better logging
         initial_days.sort()
 
-        self.logger.info(f"Generated {len(initial_days)} random days to sample")
+        self.logger.info("Generated %s random days to sample", len(initial_days))
 
-        # Step 1: Get the first page of results and total counts for each day in one pass
+        # Step 1: Get the first page of results and total counts for each
+        # day in one pass
         for i, day in enumerate(initial_days):
             # Check rate limit periodically
             if i % 5 == 0:
                 remaining = self._check_rate_limit("search")
                 if remaining is not None and remaining <= self.rate_limit_safety:
                     self.logger.warning(
-                        f"Approaching GitHub API rate limit ({remaining} remaining). "
-                        f"Stopping initial sampling after {i}/{days_to_sample} days."
+                        "Approaching GitHub API rate limit (%s remaining). "
+                        "Stopping initial sampling after %s/%s days.",
+                        remaining,
+                        i,
+                        days_to_sample,
                     )
                     break
 
@@ -269,9 +290,12 @@ class TemporalSampler(BaseSampler):
             )
 
             # Construct the URL for first page
-            url = f"{self.api_base_url}/search/repositories?q={query}&sort=updated&order=desc&per_page={per_page}&page=1"
+            url = (
+                f"{self.api_base_url}/search/repositories"
+                f"?q={query}&sort=updated&order=desc&per_page={per_page}&page=1"
+            )
 
-            self.logger.info(f"Sampling day {i + 1}/{days_to_sample}: {day_str}")
+            self.logger.info("Sampling day %s/%s: %s", i + 1, days_to_sample, day_str)
 
             try:
                 self.attempts += 1
@@ -279,16 +303,16 @@ class TemporalSampler(BaseSampler):
 
                 if response is None:
                     self.logger.warning(
-                        f"Request failed or rate limited for day {day_str}"
+                        "Request failed or rate limited for day %s", day_str
                     )
                     continue
-                elif response.status_code == HTTP_OK:
+                if response.status_code == HTTP_OK:
                     results = response.json()
                     count = results["total_count"]
 
                     if count > 0:
                         self.success_count += 1
-                        self.logger.info(f"Found {count} repositories on {day_str}")
+                        self.logger.info("Found %s repositories on %s", count, day_str)
 
                         # Store period data for weighting only - do NOT add repos yet
                         # to avoid page 1 bias (most recently updated repos)
@@ -297,16 +321,17 @@ class TemporalSampler(BaseSampler):
                             "day_str": day_str,
                         }
                     else:
-                        self.logger.info(f"No repositories found on {day_str}")
+                        self.logger.info("No repositories found on %s", day_str)
 
                 else:
                     self.logger.warning(
-                        f"API error: Status code {response.status_code}, "
-                        f"Response: {response.text[:200]}..."
+                        "API error: Status code %s, Response: %s...",
+                        response.status_code,
+                        response.text[:200],
                     )
 
             except Exception as e:
-                self.logger.error(f"Error sampling day {day_str}: {str(e)}")
+                self.logger.error("Error sampling day %s: %s", day_str, e)
                 time.sleep(min_wait * 2)  # Longer delay on error
 
         # Step 2: Create weighted distribution based on repository counts
@@ -330,8 +355,9 @@ class TemporalSampler(BaseSampler):
         probs = [weight / total_weight for weight in weights]
 
         self.logger.info(
-            f"Created weighted distribution across {len(days)} days "
-            f"(total weight: {total_weight})"
+            "Created weighted distribution across %s days (total weight: %s)",
+            len(days),
+            total_weight,
         )
 
         # Log the top days with highest weights
@@ -339,7 +365,7 @@ class TemporalSampler(BaseSampler):
         self.logger.info("Top 5 days by repository count:")
         for day, count in top_days:
             day_str = period_data[day]["day_str"]
-            self.logger.info(f"  {day_str}: {count} repositories")
+            self.logger.info("  %s: %s repositories", day_str, count)
 
         # Step 4: Sample repositories from days based on weighted distribution
         # iterations counts every pass (including skipped days) so the loop is
@@ -354,8 +380,11 @@ class TemporalSampler(BaseSampler):
                 remaining = self._check_rate_limit("search")
                 if remaining is not None and remaining <= self.rate_limit_safety:
                     self.logger.warning(
-                        f"Approaching GitHub API rate limit ({remaining} remaining). "
-                        f"Stopping after collecting {len(all_repos)}/{n_samples} repositories."
+                        "Approaching GitHub API rate limit (%s remaining). "
+                        "Stopping after collecting %s/%s repositories.",
+                        remaining,
+                        len(all_repos),
+                        n_samples,
                     )
                     break
 
@@ -378,8 +407,12 @@ class TemporalSampler(BaseSampler):
 
             # Log the day we're querying
             self.logger.info(
-                f"Sampling weighted day: {day_str} (weight: {count}) "
-                f"- collected {len(all_repos)}/{n_samples} repositories so far"
+                "Sampling weighted day: %s (weight: %s) - collected %s/%s "
+                "repositories so far",
+                day_str,
+                count,
+                len(all_repos),
+                n_samples,
             )
 
             # Build query
@@ -409,10 +442,10 @@ class TemporalSampler(BaseSampler):
 
                 if response is None:
                     self.logger.warning(
-                        f"Request failed or rate limited for day {day_str}"
+                        "Request failed or rate limited for day %s", day_str
                     )
                     continue
-                elif response.status_code == HTTP_OK:
+                if response.status_code == HTTP_OK:
                     results = response.json()
 
                     if results["total_count"] > 0:
@@ -420,8 +453,11 @@ class TemporalSampler(BaseSampler):
                         self.success_count += 1
 
                         self.logger.info(
-                            f"Found {results['total_count']} repositories "
-                            f"(fetched {len(repos)} from page {page} in {query_elapsed:.2f} seconds)"
+                            "Found %s repositories (fetched %s from page %s in %.2fs)",
+                            results["total_count"],
+                            len(repos),
+                            page,
+                            query_elapsed,
                         )
 
                         # Process repos to match our standard format
@@ -457,32 +493,37 @@ class TemporalSampler(BaseSampler):
                         all_repos.extend(period_repos)
                         added_count = len(period_repos)
                         self.logger.info(
-                            f"Added {added_count} new repositories from this day"
+                            "Added %s new repositories from this day", added_count
                         )
 
                         # If we've added enough repos, we can stop
                         if len(all_repos) >= n_samples:
                             self.logger.info(
-                                f"Reached target of {n_samples} repositories. Stopping sampling."
+                                "Reached target of %s repositories. Stopping sampling.",
+                                n_samples,
                             )
                             break
                     else:
-                        self.logger.info(f"No repositories found on {day_str}")
+                        self.logger.info("No repositories found on %s", day_str)
 
                 else:
                     self.logger.warning(
-                        f"API error: Status code {response.status_code}, "
-                        f"Response: {response.text[:200]}..."
+                        "API error: Status code %s, Response: %s...",
+                        response.status_code,
+                        response.text[:200],
                     )
 
             except Exception as e:
-                self.logger.error(f"Error sampling day {day_str}: {str(e)}")
+                self.logger.error("Error sampling day %s: %s", day_str, e)
                 time.sleep(min_wait * 2)
 
         if len(all_repos) < n_samples and iterations >= max_attempts:
             self.logger.warning(
-                f"Stopped after max_attempts={max_attempts} iterations with "
-                f"{len(all_repos)}/{n_samples} repositories collected"
+                "Stopped after max_attempts=%s iterations with %s/%s "
+                "repositories collected",
+                max_attempts,
+                len(all_repos),
+                n_samples,
             )
 
         # Report summary
@@ -492,9 +533,13 @@ class TemporalSampler(BaseSampler):
         )
 
         self.logger.info(
-            f"Sampling completed in {elapsed_time:.2f} seconds: "
-            f"{self.attempts} attempts, {self.success_count} successful ({success_rate:.1f}%), "
-            f"collected {len(all_repos)} repositories"
+            "Sampling completed in %.2fs: %s attempts, %s successful "
+            "(%.1f%%), collected %s repositories",
+            elapsed_time,
+            self.attempts,
+            self.success_count,
+            success_rate,
+            len(all_repos),
         )
 
         # Apply any additional filters
@@ -504,8 +549,9 @@ class TemporalSampler(BaseSampler):
 
         if filtered_count_before != filtered_count_after:
             self.logger.info(
-                f"Applied filters: {filtered_count_before - filtered_count_after} repositories filtered out, "
-                f"{filtered_count_after} repositories remaining"
+                "Applied filters: %s repositories filtered out, %s remaining",
+                filtered_count_before - filtered_count_after,
+                filtered_count_after,
             )
 
         return self.results

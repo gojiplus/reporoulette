@@ -1,10 +1,11 @@
-# reporoulette/samplers/base.py
+"""Abstract base class with the shared sampler plumbing (rate limits, filters)."""
+
 import logging
 import random
 import time
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import requests
 
@@ -29,6 +30,13 @@ class BaseSampler(ABC):
         token: str | None = None,
         rate_limit_safety: int = DEFAULT_RATE_LIMIT_SAFETY,
     ) -> None:
+        """Store the token and rate-limit margin shared by every sampler.
+
+        Args:
+            token: GitHub API token; unauthenticated when omitted.
+            rate_limit_safety: Stop sampling when this many API calls remain
+                in the current rate-limit window.
+        """
         self.token: str | None = token
         self.rate_limit_safety: int = rate_limit_safety
         # Which rate-limit bucket this sampler's requests draw from;
@@ -67,7 +75,6 @@ class BaseSampler(ABC):
         Returns:
             List of repository data dictionaries
         """
-        pass
 
     @staticmethod
     def _owner_login(repo: dict[str, Any]) -> str | None:
@@ -81,7 +88,7 @@ class BaseSampler(ABC):
         """
         owner: Any = repo.get("owner")
         if isinstance(owner, dict):
-            owner = owner.get("login")
+            owner = cast("dict[str, Any]", owner).get("login")
         return owner if isinstance(owner, str) else None
 
     @staticmethod
@@ -97,7 +104,7 @@ class BaseSampler(ABC):
             Timezone-aware datetime
         """
         if not isinstance(value, datetime):
-            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            value = datetime.fromisoformat(value)
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)
         return value
@@ -138,7 +145,7 @@ class BaseSampler(ABC):
                 continue
             if not any(field in r for r in filtered):
                 self.logger.warning(
-                    f"Filter '{key}' skipped: no repository has a '{field}' field"
+                    "Filter '%s' skipped: no repository has a '%s' field", key, field
                 )
                 continue
             threshold = filters[key]
@@ -199,7 +206,7 @@ class BaseSampler(ABC):
         }
         for key in filters:
             if key not in known:
-                self.logger.warning(f"Unknown filter '{key}' ignored")
+                self.logger.warning("Unknown filter '%s' ignored", key)
 
         return filtered
 
@@ -228,23 +235,29 @@ class BaseSampler(ABC):
         headers = self._get_headers()
 
         try:
-            self.logger.debug(f"Checking GitHub API rate limit for {resource}")
-            response = requests.get(f"{self.api_base_url}/rate_limit", headers=headers)
+            self.logger.debug("Checking GitHub API rate limit for %s", resource)
+            response = requests.get(
+                f"{self.api_base_url}/rate_limit",
+                headers=headers,
+                timeout=self.default_timeout,
+            )
             if response.status_code == HTTP_OK:
                 data = response.json()
                 remaining = data["resources"][resource]["remaining"]
                 reset_time = data["resources"][resource]["reset"]
                 self.logger.debug(
-                    f"Rate limit status ({resource}): {remaining} requests remaining, reset at timestamp {reset_time}"
+                    "Rate limit status (%s): %s remaining, reset at timestamp %s",
+                    resource,
+                    remaining,
+                    reset_time,
                 )
                 return remaining
-            else:
-                self.logger.warning(
-                    f"Failed to check rate limit. Status code: {response.status_code}"
-                )
-                return None
+            self.logger.warning(
+                "Failed to check rate limit. Status code: %s", response.status_code
+            )
+            return None
         except Exception as e:
-            self.logger.error(f"Error checking rate limit: {str(e)}")
+            self.logger.error("Error checking rate limit: %s", e)
             return None
 
     def _make_github_request(
@@ -291,8 +304,9 @@ class BaseSampler(ABC):
             remaining = self._check_rate_limit(self.rate_limit_resource)
             if remaining is not None and remaining <= self.rate_limit_safety:
                 self.logger.warning(
-                    f"Approaching GitHub API rate limit ({remaining} remaining). "
-                    f"Request aborted for safety."
+                    "Approaching GitHub API rate limit (%s remaining). "
+                    "Request aborted for safety.",
+                    remaining,
                 )
                 return None
 
@@ -311,11 +325,10 @@ class BaseSampler(ABC):
                         self.logger.warning(msg)
                         self._handle_rate_limit_exceeded(response)
                         continue
-                    else:
-                        self.logger.error(
-                            f"Rate limit exceeded after {max_retries} retries"
-                        )
-                        return None
+                    self.logger.error(
+                        "Rate limit exceeded after %s retries", max_retries
+                    )
+                    return None
 
                 # Add delay for rate limiting
                 time.sleep(min_wait)
@@ -323,14 +336,20 @@ class BaseSampler(ABC):
 
             except Exception as e:
                 if attempt < max_retries:
-                    msg = f"Error making GitHub request (attempt {attempt + 1}): {str(e)}, retrying..."
-                    self.logger.warning(msg)
+                    self.logger.warning(
+                        "Error making GitHub request (attempt %s): %s, retrying...",
+                        attempt + 1,
+                        e,
+                    )
                     time.sleep(min_wait * (attempt + 1))  # Exponential backoff
                     continue
-                else:
-                    msg = f"Error making GitHub request to {url} after {max_retries} retries: {str(e)}"
-                    self.logger.error(msg)
-                    return None
+                self.logger.error(
+                    "Error making GitHub request to %s after %s retries: %s",
+                    url,
+                    max_retries,
+                    e,
+                )
+                return None
 
         return None
 
@@ -348,15 +367,18 @@ class BaseSampler(ABC):
                 current_time = time.time()
                 wait_time = max(reset_time - current_time + 5, 10)
                 self.logger.warning(
-                    f"Rate limit exceeded. Reset at {time.ctime(reset_time)}. "
-                    f"Waiting {wait_time:.1f} seconds..."
+                    "Rate limit exceeded. Reset at %s. Waiting %.1f seconds...",
+                    time.ctime(reset_time),
+                    wait_time,
                 )
             else:
                 # Check if we can get reset time from rate_limit endpoint
                 try:
                     headers = self._get_headers()
                     rate_limit_response = requests.get(
-                        f"{self.api_base_url}/rate_limit", headers=headers
+                        f"{self.api_base_url}/rate_limit",
+                        headers=headers,
+                        timeout=self.default_timeout,
                     )
                     if rate_limit_response.status_code == HTTP_OK:
                         data = rate_limit_response.json()
@@ -364,17 +386,18 @@ class BaseSampler(ABC):
                         current_time = time.time()
                         wait_time = max(reset_time - current_time + 10, 10)
                         self.logger.warning(
-                            f"Rate limit exceeded. Reset at {time.ctime(reset_time)}. "
-                            f"Waiting {wait_time:.1f} seconds..."
+                            "Rate limit exceeded. Reset at %s. Waiting %.1f seconds...",
+                            time.ctime(reset_time),
+                            wait_time,
                         )
                 except Exception:
-                    pass  # Fall back to default wait time
+                    self.logger.debug("Could not read reset time; using default wait")
         except Exception as e:
-            self.logger.error(f"Error parsing rate limit headers: {str(e)}")
+            self.logger.error("Error parsing rate limit headers: %s", e)
 
         if wait_time == DEFAULT_WAIT_TIME:
             self.logger.warning(
-                f"Rate limit exceeded. Waiting {wait_time:.1f} seconds (default)..."
+                "Rate limit exceeded. Waiting %.1f seconds (default)...", wait_time
             )
         time.sleep(wait_time)
 
@@ -396,8 +419,10 @@ class BaseSampler(ABC):
         self.default_timeout = default_timeout
 
         self.logger.info(
-            f"Rate limiting configured: interval={min_request_interval}s, "
-            f"max_retries={max_retries_on_rate_limit}, timeout={default_timeout}s"
+            "Rate limiting configured: interval=%ss, max_retries=%s, timeout=%ss",
+            min_request_interval,
+            max_retries_on_rate_limit,
+            default_timeout,
         )
 
     def get_rate_limit_config(self) -> dict[str, Any]:

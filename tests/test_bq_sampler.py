@@ -38,7 +38,7 @@ class TestBigQuerySamplerQueries(unittest.TestCase):
     def all_queries(self, sampler):
         count_q = sampler._build_count_query(days_to_sample=5, years_back=2)
         day_data = {"sample_day": "20240101", "repo_count": 100, "samples_to_take": 10}
-        day_q = sampler._build_day_query(day_data, 0, years_back=2)
+        day_q = sampler._build_day_query(day_data, 0)
         combined_q = sampler._combine_day_queries([day_q], n_samples=10)
         return {"count": count_q, "day": day_q, "combined": combined_q}
 
@@ -97,9 +97,7 @@ class TestBigQuerySamplerQueries(unittest.TestCase):
         # rejects bare UNION ALL between such operands ("Expected \")\" but
         # got keyword UNION").
         day_data = {"sample_day": "20240101", "repo_count": 100, "samples_to_take": 5}
-        day_queries = [
-            self.sampler._build_day_query(day_data, i, years_back=2) for i in range(2)
-        ]
+        day_queries = [self.sampler._build_day_query(day_data, i) for i in range(2)]
         combined = self.sampler._combine_day_queries(day_queries, n_samples=10)
         self.assertIn(")\nUNION ALL\n(", combined)
 
@@ -201,15 +199,13 @@ class TestBigQuerySamplerLive(unittest.TestCase):
             # Decode base64 encoded credentials and save to temp file
             decoded_credentials = base64.b64decode(encoded_credentials).decode("utf-8")
             temp_path = "temp_credentials.json"
-            with open(temp_path, "w") as f:
-                f.write(decoded_credentials)
+            Path(temp_path).write_text(decoded_credentials)
             cls.credentials_path = temp_path
             cls.credentials_method = "encoded"
         elif json_credentials:
             # Save JSON credentials to temp file
             temp_path = "temp_credentials.json"
-            with open(temp_path, "w") as f:
-                f.write(json_credentials)
+            Path(temp_path).write_text(json_credentials)
             cls.credentials_path = temp_path
             cls.credentials_method = "json"
         else:
@@ -228,12 +224,12 @@ class TestBigQuerySamplerLive(unittest.TestCase):
                 log_level=logging.INFO,
             )
             cls.credentials_available = True
-            cls.logger.info(f"Using credentials method: {cls.credentials_method}")
-            cls.logger.info(f"Using project ID: {cls.project_id}")
+            cls.logger.info("Using credentials method: %s", cls.credentials_method)
+            cls.logger.info("Using project ID: %s", cls.project_id)
         except Exception as e:
             cls.credentials_available = False
             cls.sampler = None
-            cls.logger.warning(f"BigQuery credentials not available: {e}")
+            cls.logger.warning("BigQuery credentials not available: %s", e)
             cls.logger.warning("BigQuery tests will be skipped")
 
     @classmethod
@@ -285,9 +281,9 @@ class TestBigQuerySamplerLive(unittest.TestCase):
             self.skipTest("BigQuery credentials not available")
 
         # Only sample 2 repos from the last month
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
-        one_month_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        one_month_ago = (datetime.now(UTC) - timedelta(days=30)).strftime("%Y-%m-%d")
 
         repos = self.sampler.sample_active(n_samples=2, created_after=one_month_ago)
 

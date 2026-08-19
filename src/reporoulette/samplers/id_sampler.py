@@ -1,8 +1,9 @@
-# reporoulette/samplers/id_sampler.py
+"""Random sampling by probing GitHub's sequential repository ID space."""
+
 import logging
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
@@ -57,14 +58,14 @@ class IDSampler(BaseSampler):
         self._seed = seed
         if seed is not None:
             random.seed(seed)
-            self.logger.info(f"Random seed set to: {seed}")
+            self.logger.info("Random seed set to: %s", seed)
 
         self.min_id: int = min_id
         self.max_id: int = max_id
         self.rate_limit_safety: int = rate_limit_safety
 
         self.logger.info(
-            f"Initialized IDSampler with min_id={min_id}, max_id={self.max_id}"
+            "Initialized IDSampler with min_id=%s, max_id=%s", min_id, self.max_id
         )
 
     def update_max_id(self) -> int:
@@ -78,7 +79,7 @@ class IDSampler(BaseSampler):
         Returns:
             The (possibly updated) max_id
         """
-        since = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        since = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
         try:
             response = requests.get(
                 f"{self.api_base_url}/search/repositories",
@@ -90,9 +91,11 @@ class IDSampler(BaseSampler):
             items = response.json()["items"]
             if items:
                 self.max_id = max(item["id"] for item in items)
-                self.logger.info(f"Updated max_id to {self.max_id}")
+                self.logger.info("Updated max_id to %s", self.max_id)
         except Exception as e:
-            self.logger.warning(f"Could not update max_id (keeping {self.max_id}): {e}")
+            self.logger.warning(
+                "Could not update max_id (keeping %s): %s", self.max_id, e
+            )
         return self.max_id
 
     def _passes_filters(self, repo_data: dict[str, Any], **kwargs: Any) -> bool:
@@ -105,15 +108,19 @@ class IDSampler(BaseSampler):
         Returns:
             True if the repository passes all filters
         """
-        if "min_stars" in kwargs:
-            if repo_data.get("stargazers_count", 0) < kwargs["min_stars"]:
-                return False
+        if (
+            "min_stars" in kwargs
+            and repo_data.get("stargazers_count", 0) < kwargs["min_stars"]
+        ):
+            return False
 
-        if "min_forks" in kwargs:
-            if repo_data.get("forks_count", 0) < kwargs["min_forks"]:
-                return False
+        if (
+            "min_forks" in kwargs
+            and repo_data.get("forks_count", 0) < kwargs["min_forks"]
+        ):
+            return False
 
-        if "languages" in kwargs and kwargs["languages"]:
+        if kwargs.get("languages"):
             repo_lang = repo_data.get("language")
             if repo_lang is None or repo_lang not in kwargs["languages"]:
                 return False
@@ -139,7 +146,7 @@ class IDSampler(BaseSampler):
             List of repository data
         """
         self.logger.info(
-            f"Starting sampling: target={n_samples}, max_attempts={max_attempts}"
+            "Starting sampling: target=%s, max_attempts=%s", n_samples, max_attempts
         )
 
         if self.token:
@@ -154,11 +161,11 @@ class IDSampler(BaseSampler):
         self.success_count: int = 0
 
         # Log request rate/interval
-        self.logger.info(f"Minimum wait between requests: {min_wait} seconds")
+        self.logger.info("Minimum wait between requests: %s seconds", min_wait)
 
         # Log filter criteria if any
         if kwargs:
-            self.logger.info(f"Filter criteria: {kwargs}")
+            self.logger.info("Filter criteria: %s", kwargs)
 
         start_time = time.time()
 
@@ -173,9 +180,12 @@ class IDSampler(BaseSampler):
                     else 0
                 )
                 self.logger.info(
-                    f"Progress: {len(filtered_repos)}/{n_samples} repos found, "
-                    f"{self.attempts} attempts ({success_rate:.1f}% success rate), "
-                    f"{rate:.2f} requests/sec"
+                    "Progress: %s/%s repos, %s attempts (%.1f%% success, %.2f req/s)",
+                    len(filtered_repos),
+                    n_samples,
+                    self.attempts,
+                    success_rate,
+                    rate,
                 )
 
             # Check rate limit every 10 attempts or if we're getting close
@@ -187,14 +197,16 @@ class IDSampler(BaseSampler):
                 remaining = self._check_rate_limit()
                 if remaining is not None and remaining <= self.rate_limit_safety:
                     self.logger.warning(
-                        f"Approaching GitHub API rate limit ({remaining} remaining). "
-                        f"Stopping with {len(filtered_repos)} samples."
+                        "Approaching GitHub API rate limit (%s remaining). "
+                        "Stopping with %s samples.",
+                        remaining,
+                        len(filtered_repos),
                     )
                     break
 
             # Generate random repository ID
             repo_id = random.randint(self.min_id, self.max_id)
-            self.logger.debug(f"Trying repository ID: {repo_id}")
+            self.logger.debug("Trying repository ID: %s", repo_id)
 
             # Try to fetch the repository by ID
             url = f"{self.api_base_url}/repositories/{repo_id}"
@@ -205,7 +217,7 @@ class IDSampler(BaseSampler):
                 # Check if request succeeded
                 if response is None:
                     self.logger.debug(
-                        f"Request failed or rate limited for ID {repo_id}"
+                        "Request failed or rate limited for ID %s", repo_id
                     )
                     continue
 
@@ -216,13 +228,14 @@ class IDSampler(BaseSampler):
 
                     # Log repository details at debug level
                     self.logger.debug(
-                        f"Repository details: name={repo_json['name']}, "
-                        f"owner={repo_json['owner']['login']}, "
-                        f"stars={repo_json.get('stargazers_count', 0)}, "
-                        f"language={repo_json.get('language')}"
+                        "Repository details: name=%s, owner=%s, stars=%s, language=%s",
+                        repo_json["name"],
+                        repo_json["owner"]["login"],
+                        repo_json.get("stargazers_count", 0),
+                        repo_json.get("language"),
                     )
 
-                    repo_data = {
+                    repo_data: dict[str, Any] = {
                         "id": repo_id,
                         "name": repo_json["name"],
                         "full_name": repo_json["full_name"],
@@ -242,21 +255,26 @@ class IDSampler(BaseSampler):
                     if self._passes_filters(repo_data, **kwargs):
                         filtered_repos.append(repo_data)
                         self.logger.info(
-                            f"Found valid repository ({len(filtered_repos)}/{n_samples}): "
-                            f"{repo_json['full_name']} (id: {repo_id})"
+                            "Found valid repository (%s/%s): %s (id: %s)",
+                            len(filtered_repos),
+                            n_samples,
+                            repo_json["full_name"],
+                            repo_id,
                         )
                     else:
                         self.logger.debug(
-                            f"Repository {repo_json['full_name']} filtered out"
+                            "Repository %s filtered out", repo_json["full_name"]
                         )
                 else:
                     self.logger.debug(
-                        f"Invalid repository ID: {repo_id} "
-                        f"(Status code: {response.status_code}, Response: {response.text[:100]}...)"
+                        "Invalid repository ID: %s (Status code: %s, Response: %s...)",
+                        repo_id,
+                        response.status_code,
+                        response.text[:100],
                     )
 
             except Exception as e:
-                self.logger.error(f"Error sampling repository ID {repo_id}: {str(e)}")
+                self.logger.error("Error sampling repository ID %s: %s", repo_id, e)
                 time.sleep(min_wait * 5)
 
         # Calculate final stats
@@ -267,9 +285,13 @@ class IDSampler(BaseSampler):
         rate = self.attempts / elapsed if elapsed > 0 else 0
 
         self.logger.info(
-            f"Sampling completed in {elapsed:.2f} seconds: "
-            f"{self.attempts} attempts, found {len(filtered_repos)} repositories "
-            f"({success_rate:.1f}% success rate, {rate:.2f} requests/sec)"
+            "Sampling completed in %.2fs: %s attempts, %s repositories "
+            "(%.1f%% success, %.2f req/s)",
+            elapsed,
+            self.attempts,
+            len(filtered_repos),
+            success_rate,
+            rate,
         )
 
         self.results: list[dict[str, Any]] = filtered_repos

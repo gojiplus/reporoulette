@@ -13,11 +13,11 @@ This project uses **uv** for dependency management and **uv_build** for the buil
 ### Installation and Setup
 ```bash
 # Install all dependencies (including dev, docs, and bigquery extras)
-uv sync --all-extras --group dev
+uv sync --all-groups --all-extras
 
 # Install specific extras only
 uv sync --extra bigquery          # For BigQuery sampler
-uv sync --extra docs              # For documentation
+uv sync --group docs              # For documentation
 uv sync --group dev               # For development tools
 
 # Install and run without syncing
@@ -38,8 +38,8 @@ uv run pytest tests/test_temporal_sampler.py
 # Skip live-credential tests (BigQuery live tests are marked "integration")
 uv run pytest -m "not integration"
 
-# Run tests with coverage
-uv run pytest --cov=reporoulette --cov-report=xml
+# Run tests with coverage (CI enforces the floor set in .github/workflows/ci.yml)
+uv run pytest --cov
 ```
 
 ### Linting and Formatting
@@ -63,11 +63,11 @@ uv run ruff check --fix .
 # Run pyright type checking
 uv run pyright
 
-# Run pydoclint for docstring validation (excludes tests)
-uv run pydoclint reporoulette/
+# Run pydoclint for docstring validation (CI pins this version)
+uvx --from pydoclint==0.9.1 pydoclint src/
 
 # Run both type checking and docstring linting
-uv run pyright && uv run pydoclint reporoulette/
+uv run pyright && uvx --from pydoclint==0.9.1 pydoclint src/
 ```
 
 ### Building and Distribution
@@ -84,15 +84,14 @@ uv pip install dist/reporoulette-*.whl
 ```
 
 ### Build System
-This project uses the **uv_build** backend for ultra-fast builds (10-35x faster than setuptools). The flat package layout is configured in `pyproject.toml`:
+This project uses the **uv_build** backend with the standard `src/` layout:
 
 ```toml
 [build-system]
-requires = ["uv_build>=0.9.11,<0.10.0"]
+requires = ["uv_build>=0.12.5,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-root = ""
 module-name = "reporoulette"
 ```
 
@@ -111,9 +110,9 @@ uv run pre-commit autoupdate
 ## Architecture
 
 ### Core Structure
-- **Base Classes**: `reporoulette/samplers/base.py` defines `BaseSampler` abstract class with common functionality
-- **Sampler Implementations**: Four main sampling strategies in `reporoulette/samplers/`
-- **Main Module**: `reporoulette/__init__.py` provides unified interface and convenience functions
+- **Base Classes**: `src/reporoulette/samplers/base.py` defines `BaseSampler` abstract class with common functionality
+- **Sampler Implementations**: Four main sampling strategies in `src/reporoulette/samplers/`
+- **Main Module**: `src/reporoulette/__init__.py` provides unified interface and convenience functions
 
 ### Sampling Methods
 
@@ -138,12 +137,12 @@ uv run pre-commit autoupdate
 ### Configuration
 - GitHub tokens via `GITHUB_TOKEN` environment variable
 - Google Cloud credentials via `GOOGLE_APPLICATION_CREDENTIALS`
-- Logging configuration in `pyproject.toml` under `[tool.reporoulette.logging]`
+- Logging is configured in code (`src/reporoulette/logging_config.py`)
 
 ## Working with the Codebase
 
 ### Adding New Samplers
-1. Inherit from `BaseSampler` in `reporoulette/samplers/base.py`
+1. Inherit from `BaseSampler` in `src/reporoulette/samplers/base.py`
 2. Implement the abstract `sample()` method
 3. Add appropriate error handling and logging
 4. Update `__init__.py` files to export the new sampler

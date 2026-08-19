@@ -7,9 +7,12 @@ A Python library for randomly sampling GitHub repositories using multiple method
 - GitHub Archive sampling: Event-based sampling from GitHub Archive files
 
 Example:
-    >>> from reporoulette import sample
-    >>> results = sample(method='temporal', n_samples=10)
-    >>> print(f"Found {len(results['samples'])} repositories")
+    Hits the live GitHub API, so shown as a code block rather than a doctest::
+
+        from reporoulette import sample
+
+        results = sample(method="temporal", n_samples=10)
+        print(f"Found {len(results['samples'])} repositories")
 """
 
 import importlib.metadata
@@ -92,9 +95,9 @@ def sample(
 
 # Export samplers
 __all__ = [
-    "IDSampler",
-    "TemporalSampler",
     "BigQuerySampler",
     "GHArchiveSampler",
+    "IDSampler",
+    "TemporalSampler",
     "sample",
 ]

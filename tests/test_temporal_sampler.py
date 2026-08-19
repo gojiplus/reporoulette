@@ -1,6 +1,6 @@
 import re
 import unittest
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from reporoulette.samplers.temporal_sampler import TemporalSampler
@@ -34,7 +34,7 @@ def make_repo(name, owner="test-owner", language="Python"):
 class TestTemporalSampler(unittest.TestCase):
     def setUp(self):
         # Create a real instance with date range
-        end_date = datetime.now()
+        end_date = datetime.now(UTC)
         start_date = end_date - timedelta(days=30)
         self.sampler = TemporalSampler(
             seed=42, start_date=start_date, end_date=end_date
@@ -163,7 +163,11 @@ class TestTemporalSampler(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         self.sampler.logger.warning.assert_any_call(
-            "Stopped after max_attempts=20 iterations with 1/10 repositories collected"
+            "Stopped after max_attempts=%s iterations with %s/%s "
+            "repositories collected",
+            20,
+            1,
+            10,
         )
 
     def test_default_rate_limit_safety_below_search_ceiling(self):
