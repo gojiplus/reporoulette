@@ -1,10 +1,11 @@
-# reporoulette/samplers/gh_archive_sampler.py
+"""Event-based sampling from GH Archive's hourly event dumps."""
+
 import gzip
 import json
 import logging
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
@@ -51,7 +52,7 @@ class GHArchiveSampler(BaseSampler):
         # Set random seed if provided
         if seed is not None:
             random.seed(seed)
-            self.logger.info(f"Random seed set to: {seed}")
+            self.logger.info("Random seed set to: %s", seed)
 
         self.logger.info("Initialized GHArchiveSampler")
 
@@ -68,7 +69,7 @@ class GHArchiveSampler(BaseSampler):
         Returns:
             List of repository data
         """
-        self.logger.info(f"Sample method called with n_samples={n_samples}")
+        self.logger.info("Sample method called with n_samples=%s", n_samples)
 
         # Call the main implementation method
         return self.gh_sampler(n_samples=n_samples, **kwargs)
@@ -113,9 +114,14 @@ class GHArchiveSampler(BaseSampler):
             List of repository data
         """
         self.logger.info(
-            f"Sampling via archives: n_samples={n_samples}, days_to_sample={days_to_sample}, "
-            f"repos_per_day={repos_per_day}, years_back={years_back}, "
-            f"event_types={event_types}, hours_per_day={hours_per_day}"
+            "Sampling via archives: n_samples=%s, days_to_sample=%s, "
+            "repos_per_day=%s, years_back=%s, event_types=%s, hours_per_day=%s",
+            n_samples,
+            days_to_sample,
+            repos_per_day,
+            years_back,
+            event_types,
+            hours_per_day,
         )
 
         # Set default event types if None provided
@@ -124,7 +130,7 @@ class GHArchiveSampler(BaseSampler):
 
         # Log filter criteria if any
         if kwargs:
-            self.logger.info(f"Filter criteria: {kwargs}")
+            self.logger.info("Filter criteria: %s", kwargs)
 
         start_time = time.time()
 
@@ -132,12 +138,12 @@ class GHArchiveSampler(BaseSampler):
         days_needed = max(1, (n_samples + repos_per_day - 1) // repos_per_day)
         days_to_sample = max(days_to_sample, days_needed)
         self.logger.debug(
-            f"Adjusted days_to_sample to {days_to_sample} to ensure enough data"
+            "Adjusted days_to_sample to %s to ensure enough data", days_to_sample
         )
 
         # Generate random days
         random_days: list[datetime] = []
-        now = datetime.now()
+        now = datetime.now(UTC)
 
         for _ in range(days_to_sample):
             # Random days back (within years_back)
@@ -162,7 +168,7 @@ class GHArchiveSampler(BaseSampler):
             self.attempts += 1
             # Format the date string for logging
             day_str = target_date.strftime("%Y-%m-%d")
-            self.logger.info(f"Processing day {i + 1}/{days_to_sample}: {day_str}")
+            self.logger.info("Processing day %s/%s: %s", i + 1, days_to_sample, day_str)
 
             day_repos: dict[str, dict[str, Any]] = {}
             day_events_processed = 0
@@ -185,8 +191,9 @@ class GHArchiveSampler(BaseSampler):
                     response = requests.get(archive_url, stream=True, timeout=30)
                     if response.status_code != HTTP_OK:
                         self.logger.warning(
-                            f"Failed to download archive {archive_url}: "
-                            f"HTTP {response.status_code}"
+                            "Failed to download archive %s: HTTP %s",
+                            archive_url,
+                            response.status_code,
                         )
                         continue
 
@@ -205,19 +212,14 @@ class GHArchiveSampler(BaseSampler):
                                 # Add an additional check to only record CreateEvent
                                 # repositories if CreateEvent is the ONLY type in
                                 # event_types
-                                if (
-                                    len(event_types) == 1
-                                    and event_types[0] == "CreateEvent"
+                                if event_types == ["CreateEvent"] and not (
+                                    # Only actual repository-creation events
+                                    event_type == "CreateEvent"
+                                    and event.get("payload", {}).get("ref_type")
+                                    == "repository"
                                 ):
-                                    # For CreateEvent, we only want actual
-                                    # repository creation events specifically
-                                    if not (
-                                        event_type == "CreateEvent"
-                                        and event.get("payload", {}).get("ref_type")
-                                        == "repository"
-                                    ):
-                                        day_events_skipped += 1
-                                        continue
+                                    day_events_skipped += 1
+                                    continue
 
                                 # Extract repo information
                                 repo = event.get("repo", {})
@@ -236,7 +238,7 @@ class GHArchiveSampler(BaseSampler):
                                 # Get additional repo information
                                 owner, name = repo_name.split("/", 1)
 
-                                repo_data = {
+                                repo_data: dict[str, Any] = {
                                     "full_name": repo_name,
                                     "name": name,
                                     "owner": owner,
@@ -254,15 +256,17 @@ class GHArchiveSampler(BaseSampler):
                                 continue
                             except Exception as e:
                                 day_events_error += 1
-                                self.logger.warning(f"Error processing event: {e}")
+                                self.logger.warning("Error processing event: %s", e)
                                 continue
                     hours_processed += 1
 
                 except Exception as e:
-                    self.logger.warning(f"Error processing archive {archive_url}: {e}")
+                    self.logger.warning(
+                        "Error processing archive %s: %s", archive_url, e
+                    )
 
             if hours_processed == 0:
-                self.logger.warning(f"No archive hours processed for {day_str}")
+                self.logger.warning("No archive hours processed for %s", day_str)
                 errors += 1
                 continue
 
@@ -272,10 +276,11 @@ class GHArchiveSampler(BaseSampler):
                 and event_types == ["CreateEvent"]
             ):
                 self.logger.warning(
-                    f"No repository-creation events in {day_str}: GitHub "
-                    f"removed repository CreateEvents from the public events "
-                    f"feed on 2025-10-07, so days after that date have an "
-                    f"empty population under the default event_types"
+                    "No repository-creation events in %s: GitHub removed "
+                    "repository CreateEvents from the public events feed on "
+                    "2025-10-07, so days after that date have an empty "
+                    "population under the default event_types",
+                    day_str,
                 )
 
             # Randomly sample repositories for this day
@@ -292,21 +297,26 @@ class GHArchiveSampler(BaseSampler):
             self.success_count += 1
 
             self.logger.info(
-                f"Found {len(sampled_day_repos)} repositories from {day_str} "
-                f"({hours_processed}/24 hours, {day_events_processed} events "
-                f"in {day_process_time:.2f} seconds, "
-                f"skipped {day_events_skipped}, errors {day_events_error})"
+                "Found %s repositories from %s (%s/24 hours, %s events "
+                "in %.2fs, skipped %s, errors %s)",
+                len(sampled_day_repos),
+                day_str,
+                hours_processed,
+                day_events_processed,
+                day_process_time,
+                day_events_skipped,
+                day_events_error,
             )
 
             # Log progress towards overall target
             self.logger.info(
-                f"Progress: {len(all_repos)}/{n_samples} repositories collected"
+                "Progress: %s/%s repositories collected", len(all_repos), n_samples
             )
 
             # Break if we have enough repositories
             if len(all_repos) >= n_samples:
                 self.logger.info(
-                    f"Reached target sample size of {n_samples} repositories"
+                    "Reached target sample size of %s repositories", n_samples
                 )
                 break
 
@@ -320,10 +330,14 @@ class GHArchiveSampler(BaseSampler):
 
         # Log summary
         self.logger.info(
-            f"Completed archive sampling in {elapsed:.2f} seconds: "
-            f"found {len(result_repos)} repositories from {processed_days} days "
-            f"(errors: {errors}, rate: {days_per_second:.2f} days/sec, "
-            f"{repos_per_second:.2f} repos/sec)"
+            "Completed archive sampling in %.2fs: %s repositories from "
+            "%s days (errors: %s, rate: %.2f days/s, %.2f repos/s)",
+            elapsed,
+            len(result_repos),
+            processed_days,
+            errors,
+            days_per_second,
+            repos_per_second,
         )
 
         # Randomize the final list to avoid time-based patterns
@@ -341,8 +355,9 @@ class GHArchiveSampler(BaseSampler):
             filtered_count_after = len(result)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
-                    f"Applied filters: {filtered_count_before - filtered_count_after} repositories filtered out, "
-                    f"{filtered_count_after} repositories remaining"
+                    "Applied filters: %s repositories filtered out, %s remaining",
+                    filtered_count_before - filtered_count_after,
+                    filtered_count_after,
                 )
 
         self.results: list[dict[str, Any]] = result

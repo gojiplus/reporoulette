@@ -7,9 +7,6 @@ RepoRoulette: Randomly Sample GitHub Repositories
 ==================================================
 
 .. automodule:: reporoulette
-   :members:
-   :undoc-members:
-   :show-inheritance:
 
 RepoRoulette provides multiple methods for randomly sampling GitHub repositories:
 
@@ -38,6 +35,7 @@ Quick Start
    temporal_sampler
    bigquery_sampler
    gh_sampler
+   validation
 
 Indices and tables
 ==================

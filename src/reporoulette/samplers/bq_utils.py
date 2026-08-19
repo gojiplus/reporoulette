@@ -1,3 +1,5 @@
+"""Small helpers for running BigQuery queries and shaping their results."""
+
 import logging
 from datetime import datetime
 from typing import Any
@@ -22,7 +24,7 @@ def execute_query(
         # Convert each row to a dict (depending on your client, adjust as needed)
         return [dict(row) for row in results]
     except Exception as e:
-        logger.error(f"Error executing query: {e}")
+        logger.error("Error executing query: %s", e)
         return []
 
 
@@ -43,7 +45,6 @@ def format_timestamp_query(timestamp: str | datetime) -> str:
     # Redundant given the annotation, and kept anyway: callers are not all
     # type-checked, and a ValueError names the problem where an AttributeError
     # on .strftime would not.
-    elif isinstance(timestamp, datetime):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if isinstance(timestamp, datetime):  # pyright: ignore[reportUnnecessaryIsInstance]
         return f"'{timestamp.strftime('%Y-%m-%d')}'"
-    else:
-        raise ValueError("Timestamp must be a string or datetime object")
+    raise ValueError("Timestamp must be a string or datetime object")

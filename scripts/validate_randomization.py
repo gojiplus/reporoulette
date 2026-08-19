@@ -31,15 +31,17 @@ Writes docs/validation.md. Never writes credentials anywhere.
 """
 
 import argparse
+import contextlib
 import gzip
 import hashlib
+import itertools
 import json
 import logging
 import math
 import re
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -101,7 +103,7 @@ def pearson(x: list[float], y: list[float]) -> float:
 
 
 def stable_bucket(name: str, buckets: int) -> int:
-    digest = hashlib.md5(name.encode("utf-8")).digest()
+    digest = hashlib.md5(name.encode("utf-8"), usedforsecurity=False).digest()
     return int.from_bytes(digest[:4], "big") % buckets
 
 
@@ -134,9 +136,8 @@ def build_population(archive_date: str, hour: int) -> tuple[Path, list[dict]]:
         print(f"[P1] downloading {url} ...")
         with requests.get(url, stream=True, timeout=60) as resp:
             resp.raise_for_status()
-            with open(full_path, "wb") as fh:
-                for chunk in resp.iter_content(chunk_size=1 << 20):
-                    fh.write(chunk)
+            with full_path.open("wb") as fh:
+                fh.writelines(resp.iter_content(chunk_size=1 << 20))
         print(f"[P1] cached {full_path.stat().st_size / 1e6:.0f} MB")
 
     if reduced_path.exists() and population_path.exists():
@@ -180,7 +181,7 @@ def build_population(archive_date: str, hour: int) -> tuple[Path, list[dict]]:
 
 
 def seconds_of_day(created_at: str) -> float:
-    ts = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     return ts.hour * 3600 + ts.minute * 60 + ts.second
 
 
@@ -201,9 +202,11 @@ def run_p1(archive_date: str, hour: int, n_seeds: int, k: int) -> dict:
         status_code = 200
 
         def __init__(self, path):
-            self.raw = open(path, "rb")
+            # SIM115 suppressed: the response object owns the handle, mimicking
+            # requests' streaming `raw`; the sampler's gzip reader consumes it.
+            self.raw = Path(path).open("rb")  # noqa: SIM115
 
-    def fake_get(url, *args, **kwargs):
+    def fake_get(url, *_args, **_kwargs):
         if url.endswith("-0.json.gz"):
             return ArchiveResponse(reduced_path)
         return ArchiveResponse(empty_path)
@@ -355,7 +358,7 @@ def probe_ids(urls: list[str]) -> list[int]:
 
 
 def newest_repo_id(token: str) -> int:
-    since = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    since = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
     resp = requests.get(
         "https://api.github.com/search/repositories",
         params={"q": f"created:>={since}", "per_page": 100},
@@ -389,7 +392,7 @@ def run_p2(token: str, n_probes: int) -> dict:
     # (b) IDs are chronological: created_at sorted by ID should be monotone
     by_id = sorted(hits, key=lambda r: r["id"])
     dates = [r["created_at"] for r in by_id]
-    inversions = sum(1 for a, b in zip(dates, dates[1:], strict=False) if b < a)
+    inversions = sum(1 for a, b in itertools.pairwise(dates) if b < a)
     inversion_rate = inversions / max(len(dates) - 1, 1)
 
     # (c) hit rate per decile (population density over ID history)
@@ -446,10 +449,8 @@ def run_p4(token: str, id_hits: list[dict]) -> dict:
         if response is not None and response.status_code == 200:
             match = re.search(r"pushed:([0-9T:Z-]+)\.\.", url)
             if match:
-                try:
+                with contextlib.suppress(Exception):
                     counts[match.group(1)[:10]] = response.json()["total_count"]
-                except Exception:
-                    pass
         return response
 
     sampler._make_github_request = recording_request
@@ -464,12 +465,15 @@ def run_p4(token: str, id_hits: list[dict]) -> dict:
     def stats(sample: list[dict]) -> dict:
         stars = sorted(r.get("stargazers_count", 0) for r in sample)
         n = len(stars)
-        recent_cutoff = datetime.now() - timedelta(days=90)
+        recent_cutoff = datetime.now(UTC) - timedelta(days=90)
         pushed_recent = sum(
             1
             for r in sample
             if r.get("pushed_at")
-            and datetime.strptime(r["pushed_at"], "%Y-%m-%dT%H:%M:%SZ") > recent_cutoff
+            and datetime.strptime(r["pushed_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=UTC
+            )
+            > recent_cutoff
         )
         langs = Counter(r.get("language") for r in sample if r.get("language"))
         return {
@@ -640,7 +644,7 @@ def run_p6(token: str) -> dict:
     # (a) GH Archive URL contract: daily files never existed (the bug the
     # sampler shipped with), hourly files do. Probed on a recent day so the
     # canary tracks the CURRENT contract.
-    probe_day = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+    probe_day = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
     daily_code = requests.head(
         f"https://data.gharchive.org/{probe_day}.json.gz", timeout=30
     ).status_code
@@ -658,25 +662,27 @@ def run_p6(token: str) -> dict:
         checked = 0
         creations = 0
         ok = True
-        with requests.get(
-            f"https://data.gharchive.org/{day}-15.json.gz",
-            stream=True,
-            timeout=120,
-        ) as resp:
-            with gzip.GzipFile(fileobj=resp.raw) as fh:
-                for line in fh:
-                    event = json.loads(line)
-                    checked += 1
-                    if not (
-                        isinstance(event.get("type"), str)
-                        and isinstance(event.get("repo", {}).get("name"), str)
-                        and isinstance(event.get("created_at"), str)
-                    ):
-                        ok = False
-                    if is_repo_creation(event):
-                        creations += 1
-                    if checked >= limit:
-                        break
+        with (
+            requests.get(
+                f"https://data.gharchive.org/{day}-15.json.gz",
+                stream=True,
+                timeout=120,
+            ) as resp,
+            gzip.GzipFile(fileobj=resp.raw) as fh,
+        ):
+            for line in fh:
+                event = json.loads(line)
+                checked += 1
+                if not (
+                    isinstance(event.get("type"), str)
+                    and isinstance(event.get("repo", {}).get("name"), str)
+                    and isinstance(event.get("created_at"), str)
+                ):
+                    ok = False
+                if is_repo_creation(event):
+                    creations += 1
+                if checked >= limit:
+                    break
         return checked, creations, ok
 
     events_checked, recent_creations, schema_ok = scan_archive(probe_day, 500)
@@ -718,8 +724,10 @@ def run_p6(token: str) -> dict:
     )
     within = 0
     for r in repos:
-        day = datetime.strptime(r["sampled_from"], "%Y-%m-%d")
-        pushed = datetime.strptime(r["pushed_at"], "%Y-%m-%dT%H:%M:%SZ")
+        day = datetime.strptime(r["sampled_from"], "%Y-%m-%d").replace(tzinfo=UTC)
+        pushed = datetime.strptime(r["pushed_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=UTC
+        )
         if day <= pushed <= day + timedelta(days=1):
             within += 1
     frac = within / len(repos) if repos else 0.0
@@ -746,7 +754,7 @@ def write_report(sections: dict) -> None:
     lines = [
         "# Randomization Validation Report",
         "",
-        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} by "
+        f"Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')} by "
         "`scripts/validate_randomization.py`. All tests at alpha = 0.05. "
         "Chi-square critical values use the Wilson-Hilferty approximation; "
         "KS uses the asymptotic two-sample critical value. Aggregating draws "

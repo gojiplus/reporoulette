@@ -124,7 +124,8 @@ class TestIDSampler(unittest.TestCase):
         self.assertGreaterEqual(
             sampler.max_id,
             known_high_id,
-            f"Default max_id {sampler.max_id} should cover known repository ID {known_high_id}",
+            f"Default max_id {sampler.max_id} should cover known "
+            f"repository ID {known_high_id}",
         )
 
     @patch("reporoulette.samplers.id_sampler.requests.get")

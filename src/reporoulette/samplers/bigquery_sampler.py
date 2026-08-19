@@ -1,7 +1,9 @@
+"""Sampling from BigQuery's public GitHub datasets."""
+
 import logging
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .base import BaseSampler
@@ -62,10 +64,10 @@ class BigQuerySampler(BaseSampler):
         if seed is not None:
             random.seed(seed)
             self._seed = seed
-            self.logger.info(f"Random seed set to: {seed}")
+            self.logger.info("Random seed set to: %s", seed)
         else:
             self._seed = random.randint(1, 1000000)
-            self.logger.info(f"Generated random seed: {self._seed}")
+            self.logger.info("Generated random seed: %s", self._seed)
 
         if not BIGQUERY_AVAILABLE:
             error_msg = (
@@ -80,7 +82,7 @@ class BigQuerySampler(BaseSampler):
         self.client: Any = None  # BigQuery client will be initialized in _init_client
 
         self.logger.info(
-            f"Initializing BigQuery client (project_id: {project_id or 'default'})"
+            "Initializing BigQuery client (project_id: %s)", project_id or "default"
         )
         self._init_client()
 
@@ -97,11 +99,12 @@ class BigQuerySampler(BaseSampler):
         try:
             if self.credentials_path:
                 self.logger.info(
-                    f"Using service account credentials from: {self.credentials_path}"
+                    "Using service account credentials from: %s", self.credentials_path
                 )
                 if service_account is None:
                     raise ImportError("google.oauth2.service_account is not available")
-                credentials = service_account.Credentials.from_service_account_file(
+                # google-auth ships no type stubs for this constructor
+                credentials = service_account.Credentials.from_service_account_file(  # pyright: ignore[reportUnknownMemberType]
                     self.credentials_path
                 )
                 if bigquery is None:
@@ -115,10 +118,10 @@ class BigQuerySampler(BaseSampler):
                     raise ImportError("google.cloud.bigquery is not available")
                 self.client = bigquery.Client(project=self.project_id)
             self.logger.info(
-                f"BigQuery client initialized for project: {self.client.project}"
+                "BigQuery client initialized for project: %s", self.client.project
             )
         except Exception as e:
-            self.logger.error(f"Failed to initialize BigQuery client: {str(e)}")
+            self.logger.error("Failed to initialize BigQuery client: %s", e)
             raise
 
     def _execute_query(self, query: str) -> list[dict[str, Any]]:
@@ -145,7 +148,7 @@ class BigQuerySampler(BaseSampler):
             Sorted list of _TABLE_SUFFIX literals
         """
         rng = random.Random(self._seed)
-        today = datetime.now().date()
+        today = datetime.now(UTC).date()
         suffixes = {
             (today - timedelta(days=rng.randint(1, 365 * years_back))).strftime(
                 "%Y%m%d"
@@ -165,6 +168,8 @@ class BigQuerySampler(BaseSampler):
         suffix_list = ", ".join(
             f"'{s}'" for s in self._random_day_suffixes(days_to_sample, years_back)
         )
+        # S608: wildcard-table pruning requires inlined constant suffixes
+        # (see docstring); every value is generated client-side from the seed.
         return f"""
         SELECT
           CONCAT('2', _TABLE_SUFFIX) AS sample_day,
@@ -174,16 +179,16 @@ class BigQuerySampler(BaseSampler):
         GROUP BY sample_day
         HAVING COUNT(DISTINCT repo.name) > 0
         ORDER BY repo_count DESC
-        """
+        """  # noqa: S608
 
-    def _build_day_query(
-        self, day_data: dict[str, Any], i: int, years_back: int
-    ) -> str:
+    def _build_day_query(self, day_data: dict[str, Any], i: int) -> str:
         """Build SQL query to sample repositories from a specific day."""
         day = day_data.get("sample_day")
         repo_count = day_data.get("repo_count", 0)
         samples_to_take = day_data.get("samples_to_take", 1)
 
+        # S608: same constant-pruning constraint; day/count/seed are
+        # internally generated, never user strings.
         return f"""
         SELECT
             repo.name AS full_name,
@@ -201,7 +206,7 @@ class BigQuerySampler(BaseSampler):
         GROUP BY repo.name
         ORDER BY FARM_FINGERPRINT(CONCAT(repo.name, '-{self._seed}-{i}'))
         LIMIT {samples_to_take}
-        """
+        """  # noqa: S608
 
     def _combine_day_queries(self, day_queries: list[str], n_samples: int) -> str:
         """Combine day queries into final query and deduplicate results."""
@@ -224,7 +229,7 @@ class BigQuerySampler(BaseSampler):
         GROUP BY full_name
         ORDER BY FARM_FINGERPRINT(CONCAT(full_name, '-{self._seed}'))
         LIMIT {n_samples}
-        """
+        """  # noqa: S608
 
     def sample_by_day(
         self,
@@ -236,15 +241,15 @@ class BigQuerySampler(BaseSampler):
     ) -> list[dict[str, Any]]:
         """Sample repositories using a day-based approach with GitHub Archive tables."""
         self.logger.info(
-            f"Sampling {n_samples} repositories across {days_to_sample} days"
+            "Sampling %s repositories across %s days", n_samples, days_to_sample
         )
         if kwargs:
-            self.logger.info(f"Filter criteria: {kwargs}")
+            self.logger.info("Filter criteria: %s", kwargs)
 
         # Adjust days to sample if needed
         days_needed = max(1, (n_samples + repos_per_day - 1) // repos_per_day)
         days_to_sample = max(days_to_sample, days_needed)
-        self.logger.debug(f"Adjusted days_to_sample: {days_to_sample}")
+        self.logger.debug("Adjusted days_to_sample: %s", days_to_sample)
 
         count_query = self._build_count_query(days_to_sample, years_back)
         day_counts = self._execute_query(count_query)
@@ -261,14 +266,14 @@ class BigQuerySampler(BaseSampler):
             day["samples_to_take"] = min(weighted_samples, max_allowed)
 
         self.logger.info(
-            f"Found {len(day_counts)} days with {total_repos} total repositories"
+            "Found %s days with %s total repositories", len(day_counts), total_repos
         )
 
         day_queries: list[str] = []
         for i, day in enumerate(day_counts):
             if day.get("samples_to_take", 0) <= 0:
                 continue
-            day_query = self._build_day_query(day, i, years_back)
+            day_query = self._build_day_query(day, i)
             day_queries.append(day_query)
 
         final_query = self._combine_day_queries(day_queries, n_samples)
@@ -281,11 +286,13 @@ class BigQuerySampler(BaseSampler):
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
-                    f"Applied filters: {filtered_count_after}/{filtered_count_before} repositories retained"
+                    "Applied filters: %s/%s repositories retained",
+                    filtered_count_after,
+                    filtered_count_before,
                 )
 
         self.logger.info(
-            f"Completed day-based sampling: found {len(self.results)} repositories"
+            "Completed day-based sampling: found %s repositories", len(self.results)
         )
 
         if valid_repos:
@@ -301,11 +308,14 @@ class BigQuerySampler(BaseSampler):
                         "allocated": allocated,
                     }
                 day_counts_map[day_sampled]["count"] += 1
-            self.logger.info(f"Sampled from {len(day_counts_map)} different days")
+            self.logger.info("Sampled from %s different days", len(day_counts_map))
             for day_str, data in sorted(day_counts_map.items()):
                 self.logger.debug(
-                    f"Day {day_str}: {data['count']}/{data['allocated']} samples "
-                    f"from {data['repos']} repos"
+                    "Day %s: %s/%s samples from %s repos",
+                    day_str,
+                    data["count"],
+                    data["allocated"],
+                    data["repos"],
                 )
 
         return self.results
@@ -324,22 +334,25 @@ class BigQuerySampler(BaseSampler):
             n_samples: Number of repositories to sample
             created_after: Filter commits after this timestamp
             created_before: Filter commits before this timestamp
-            languages: List of programming languages to filter by (uses github_repos.languages)
+            languages: List of programming languages to filter by
+                (uses github_repos.languages)
             **kwargs: Additional filter criteria
 
         Returns:
             List of repository dictionaries
         """
         self.logger.info(
-            f"Sampling {n_samples} active repositories based on commit history"
+            "Sampling %s active repositories based on commit history", n_samples
         )
         if kwargs:
-            self.logger.info(f"Filter criteria: {kwargs}")
+            self.logger.info("Filter criteria: %s", kwargs)
 
         if created_after:
             created_after_str = format_timestamp_query(created_after)
         else:
-            one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+            one_year_ago = (datetime.now(UTC) - timedelta(days=365)).strftime(
+                "%Y-%m-%d"
+            )
             created_after_str = f"'{one_year_ago}'"
 
         if created_before:
@@ -347,7 +360,7 @@ class BigQuerySampler(BaseSampler):
         else:
             created_before_str = "CURRENT_TIMESTAMP()"
 
-        self.logger.info(f"Time period: {created_after_str} to {created_before_str}")
+        self.logger.info("Time period: %s to %s", created_after_str, created_before_str)
 
         query = self._build_active_query(
             created_after_str, created_before_str, languages, n_samples
@@ -362,11 +375,14 @@ class BigQuerySampler(BaseSampler):
             filtered_count_after = len(self.results)
             if filtered_count_before != filtered_count_after:
                 self.logger.info(
-                    f"Applied filters: {filtered_count_after}/{filtered_count_before} repositories retained"
+                    "Applied filters: %s/%s repositories retained",
+                    filtered_count_after,
+                    filtered_count_before,
                 )
 
         self.logger.info(
-            f"Completed active repository sampling: found {len(self.results)} repositories"
+            "Completed active repository sampling: found %s repositories",
+            len(self.results),
         )
         return self.results
 
@@ -390,7 +406,7 @@ class BigQuerySampler(BaseSampler):
         """
         if languages:
             lang_list = ", ".join([f"'{lang}'" for lang in languages])
-            self.logger.info(f"Filtering for languages: {lang_list}")
+            self.logger.info("Filtering for languages: %s", lang_list)
             # Use JOIN with languages table for proper language filtering
             return f"""
             WITH repo_set AS (
@@ -419,7 +435,7 @@ class BigQuerySampler(BaseSampler):
             GROUP BY rs.full_name
             ORDER BY FARM_FINGERPRINT(CONCAT(rs.full_name, '-{self._seed}'))
             LIMIT {n_samples}
-            """
+            """  # noqa: S608
         return f"""
         WITH repo_set AS (
             SELECT DISTINCT
@@ -442,7 +458,7 @@ class BigQuerySampler(BaseSampler):
         FROM repo_set
         ORDER BY FARM_FINGERPRINT(CONCAT(full_name, '-{self._seed}'))
         LIMIT {n_samples}
-        """
+        """  # noqa: S608
 
     def sample(
         self, n_samples: int = 100, population: str = "all", **kwargs: Any
@@ -458,7 +474,9 @@ class BigQuerySampler(BaseSampler):
             List of repository dictionaries
         """
         self.logger.info(
-            f"Starting repository sampling: n_samples={n_samples}, population={population}"
+            "Starting repository sampling: n_samples=%s, population=%s",
+            n_samples,
+            population,
         )
         start_time = time.time()
 
@@ -474,7 +492,9 @@ class BigQuerySampler(BaseSampler):
 
         elapsed_time = time.time() - start_time
         self.logger.info(
-            f"Sampling completed in {elapsed_time:.2f}s: {len(results)} repositories found"
+            "Sampling completed in %.2fs: %s repositories found",
+            elapsed_time,
+            len(results),
         )
 
         return results
@@ -506,13 +526,15 @@ class BigQuerySampler(BaseSampler):
             repo_name IN ({repo_list})
         GROUP BY
             repo_name
-        """
+        """  # noqa: S608
 
     def get_languages(
         self, repos: list[dict[str, Any]]
     ) -> dict[str, list[dict[str, Any]]]:
         """Retrieve language information for a list of repositories."""
-        self.logger.info(f"Fetching language information for {len(repos)} repositories")
+        self.logger.info(
+            "Fetching language information for %s repositories", len(repos)
+        )
         start_time = time.time()
 
         repo_names = [repo["full_name"] for repo in repos if "full_name" in repo]
@@ -527,8 +549,9 @@ class BigQuerySampler(BaseSampler):
         results = self._execute_query(query)
         query_elapsed = time.time() - query_start_time
         self.logger.info(
-            f"Query completed in {query_elapsed:.2f}s: "
-            f"found language data for {len(results)} repositories"
+            "Query completed in %.2fs: found language data for %s repositories",
+            query_elapsed,
+            len(results),
         )
 
         # Process results
@@ -543,17 +566,20 @@ class BigQuerySampler(BaseSampler):
         elapsed_time = time.time() - start_time
 
         self.logger.info(
-            f"Language query completed in {elapsed_time:.2f}s: "
-            f"found data for {repos_with_language}/{len(repos)} repos"
+            "Language query completed in %.2fs: found data for %s/%s repos",
+            elapsed_time,
+            repos_with_language,
+            len(repos),
         )
 
         # Generate language statistics if data was found
         if language_info:
-            all_languages: list[str] = []
-            for repo_langs in language_info.values():
-                for lang_entry in repo_langs:
-                    if "language" in lang_entry:
-                        all_languages.append(lang_entry["language"])
+            all_languages: list[str] = [
+                lang_entry["language"]
+                for repo_langs in language_info.values()
+                for lang_entry in repo_langs
+                if "language" in lang_entry
+            ]
 
             language_counts: dict[str, int] = {}
             for lang in all_languages:
@@ -565,6 +591,6 @@ class BigQuerySampler(BaseSampler):
             top_langs_str = ", ".join(
                 [f"{lang}: {count}" for lang, count in top_languages]
             )
-            self.logger.info(f"Top languages: {top_langs_str}")
+            self.logger.info("Top languages: %s", top_langs_str)
 
         return language_info

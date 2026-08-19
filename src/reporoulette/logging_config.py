@@ -1,4 +1,5 @@
-# reporoulette/logging_config.py
+"""Logger construction helpers shared by all samplers."""
+
 import logging
 import sys
 

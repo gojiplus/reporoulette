@@ -1,5 +1,5 @@
 [build-system]
-requires = ["uv_build>=0.9.11,<0.12.0"]
+requires = ["uv_build>=0.12.5,<0.13"]
 build-backend = "uv_build"
 
 [project]
@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
-    {name = "Gaurav Sood", email = "gsood07@example.com"}
+    {name = "Gaurav Sood", email = "gsood07@gmail.com"}
 ]
 keywords = [
     "github",
@@ -55,60 +55,17 @@ all = []  # Install with: pip install reporoulette[bigquery]
 "Documentation" = "https://gojiplus.github.io/reporoulette/"
 "Changelog" = "https://github.com/gojiplus/reporoulette/releases"
 
-[tool.sphinx]
-project = "reporoulette"
-author = "Gaurav Sood"
-copyright = "2025, Gaurav Sood"
-version = "0.6.0"
-release = "0.6.0"
-language = "en"
-extensions = [
-    "sphinx.ext.autodoc",
-    "sphinx.ext.viewcode",
-    "sphinx.ext.napoleon",
-    "myst_parser",
-]
-html_theme = "furo"
-
-[tool.reporoulette.logging]
-version = 1
-disable_existing_loggers = false
-
-[tool.reporoulette.logging.formatters.standard]
-format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-datefmt = "%Y-%m-%d %H:%M:%S"
-
-[tool.reporoulette.logging.handlers.console]
-class = "logging.StreamHandler"
-level = "INFO"
-formatter = "standard"
-stream = "ext://sys.stdout"
-
-[tool.reporoulette.logging.handlers.file]
-class = "logging.FileHandler"
-level = "DEBUG"
-formatter = "standard"
-filename = "reporoulette.log"
-encoding = "utf8"
-
-[tool.reporoulette.logging.loggers.reporoulette]
-level = "INFO"
-handlers = ["console", "file"]
-propagate = false
-
-[tool.reporoulette.logging.root]
-level = "WARNING"
-handlers = ["console"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Canon CI runs plain `uv run pytest`, so the default run must stay offline:
+# integration tests hit live BigQuery and are opt-in via `-m integration`.
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "--verbose",
+    '-m not integration',
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
@@ -121,33 +78,36 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "N",    # pep8-naming
-    "D",    # pydocstyle
-    "UP",   # pyupgrade
-    "B",    # flake8-bugbear
-    "C4",   # flake8-comprehensions
-    "PL",   # pylint
-]
-ignore = [
-    "E501",   # line too long (handled by formatter)
-    "D100",   # missing docstring in public module
-    "D104",   # missing docstring in public package
-    "D107",   # missing docstring in __init__
-]
-
-[tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["E402", "F401", "F403", "F811"]
-"tests/*" = ["D", "PLR2004", "PLC0415"]  # Disable docstring, magic number, and import location checks for tests
-"scripts/*" = ["D", "PLR2004", "PLC0415", "PLR0912", "PLR0915"]  # Same relaxations for maintenance scripts
-"reporoulette/samplers/*" = ["PLR0912", "PLR0913", "PLR0915", "PLR0917"]  # Allow complex samplers
+external = ["DOC"]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "N", "D", "S", "SIM", "T20", "PT", "RUF", "PTH", "RET", "PIE", "FURB", "PERF", "DTZ", "LOG", "G", "TC", "FLY", "RSE", "SLOT", "FA", "A", "EXE", "ICN", "PGH", "PLE", "ARG", "SLF", "PL"]
+# D203/D213: the google convention the fleet standard picks. W191/D206/D300:
+# ruff's own docs list these as always incompatible with `ruff format`, which
+# the standard also runs.
+ignore = ["D203", "D213", "W191", "D206", "D300"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# PT009/PT019: the suite is written unittest.TestCase-style throughout;
+# migrating ~180 assertions to bare pytest asserts is a separate refactor.
+"tests/**" = ["S101", "D", "ARG", "SLF", "PLR2004", "PLC0415", "PT009", "PT019"]
+"docs/**" = ["D"]
+# Maintenance CLI scripts: print is their output channel (T20), they
+# deliberately exercise sampler internals (SLF), and magic numbers and long
+# branchy mains are their nature.
+"scripts/*" = ["D", "T20", "SLF", "PLR2004", "PLC0415", "PLR0912", "PLR0915"]
+# Samplers wrap paginated remote APIs behind one call: many tuning knobs
+# (PLR0913/PLR0917) and retry/branch-heavy loops (PLR0912/PLR0915) are the
+# architecture, not an accident. S311: `random` is the point here —
+# reproducible statistical sampling (seeded), not cryptography.
+"src/reporoulette/samplers/*" = [
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "S311",
+]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -159,46 +119,47 @@ docs = [
     "sphinx>=4.0.0",
     "furo>=2023.0.0",
     "myst-parser>=0.15.0",
+    "sphinx-copybutton",
+    "py-canon @ git+https://github.com/gojiplus/py-canon@v1",
 ]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=3.0.0",
-    "ruff>=0.8.0",
-    "pre-commit>=3.0.0",
+    "ruff>=0.14",
     "pyright>=1.1.390",
-    "pydoclint>=0.6.0",
+    "pre-commit>=4",
+    { include-group = "test" },
 ]
+test = ["pytest>=8", "pytest-cov>=6"]
 
 [tool.uv]
 package = true
 
-[tool.uv.sources]
-# Use index strategy for better performance
-
 [tool.uv.build-backend]
-# Configure uv_build to work with flat layout (not src/)
-module-root = ""
 module-name = "reporoulette"
 
 [tool.deptry]
-pep621_dev_dependency_groups = ["dev", "docs"]
+pep621_dev_dependency_groups = ["dev", "test", "docs"]
 
 [tool.deptry.per_rule_ignores]
 DEP004 = ["google"]  # Google Cloud is an optional dependency with try/except imports
 
 [tool.pydoclint]
 style = "google"
-exclude = ".venv|build|dist|tests"
-require-return-section-when-returning-nothing = false
 arg-type-hints-in-docstring = false
-arg-type-hints-in-signature = true
 check-return-types = false
-check-yield-types = false
+check-class-attributes = false
 allow-init-docstring = true
+exclude = '\.venv|tests|docs'
+require-return-section-when-returning-nothing = false
+arg-type-hints-in-signature = true
+check-yield-types = false
 skip-checking-raises = true
 
+[tool.coverage.run]
+source = ["src"]
+
 [tool.pyright]
-include = ["reporoulette"]
+include = ["src"]
+typeCheckingMode = "standard"
 exclude = [
     "**/__pycache__",
     "**/.pytest_cache",
@@ -212,7 +173,6 @@ exclude = [
 ignore = ["tests"]
 pythonVersion = "3.12"
 pythonPlatform = "All"
-typeCheckingMode = "strict"
 useLibraryCodeForTypes = true
 reportMissingImports = "error"
 reportMissingTypeStubs = "warning"
@@ -243,10 +203,6 @@ reportUnnecessaryIsInstance = "warning"
 reportUnnecessaryCast = "warning"
 reportUnnecessaryComparison = "warning"
 reportUnnecessaryContains = "warning"
-# Off because it fights the formatter, not because the rule is wrong: `ruff
-# format` splits a long message into adjacent f-string literals, which is
-# exactly what this reports. 32 of the 121 strict-mode warnings here were
-# ruff's own output.
 reportImplicitStringConcatenation = "none"
 reportIncompatibleMethodOverride = "error"
 reportIncompatibleVariableOverride = "error"
