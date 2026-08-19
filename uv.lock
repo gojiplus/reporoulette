@@ -801,8 +801,8 @@ wheels = [
 
 [[package]]
 name = "py-canon"
-version = "1.0.1"
-source = { git = "https://github.com/gojiplus/py-canon?rev=v1#68d4d6dc85352b9f8241cc8c2121136e4d447b80" }
+version = "1.1.0"
+source = { git = "https://github.com/gojiplus/py-canon?rev=v1#f756be7a6e4dd0ea2a006c215e39ed2e1e29a412" }
 
 [[package]]
 name = "pyasn1"
