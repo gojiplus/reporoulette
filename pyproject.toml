@@ -62,16 +62,16 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 # Canon CI runs plain `uv run pytest`, so the default run must stay offline:
 # integration tests hit live BigQuery and are opt-in via `-m integration`.
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    '-m not integration',
-]
+addopts = ["--strict-markers", "--strict-config", "-m not integration", "-ra"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
 ]
+minversion = "6"
+log_level = "INFO"
+xfail_strict = true
+filterwarnings = ["error"]
 
 [tool.ruff]
 line-length = 88
