@@ -5,6 +5,5 @@ abstract: "Random sampling of GitHub repositories."
 authors:
   - family-names: "Sood"
     given-names: "Gaurav"
-    email: "gsood07@gmail.com"
 repository-code: "https://github.com/gojiplus/reporoulette"
 license: MIT
