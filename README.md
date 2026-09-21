@@ -201,7 +201,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🔗 Related Projects
 
-- [GHTorrent](https://ghtorrent.org/) - GitHub data archive project
 - [GitHub Archive](https://www.githubarchive.org/) - Archive of public GitHub timeline
 - [PyGithub](https://github.com/PyGithub/PyGithub) - Python library for the GitHub API
 
