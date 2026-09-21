@@ -142,6 +142,14 @@ pep621_dev_dependency_groups = ["dev", "test", "docs"]
 [tool.deptry.per_rule_ignores]
 DEP004 = ["google"]  # Google Cloud is an optional dependency with try/except imports
 
+[tool.preen]
+link_ignore = [
+    "https://github.com/test-owner/test-repo",
+    "https://api.github.com/x",
+    "https://api.github.com/repos/test-owner/test-repo",
+    "https://api.github.com/search/repositories",
+]
+
 [tool.pydoclint]
 style = "google"
 arg-type-hints-in-docstring = false
