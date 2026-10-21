@@ -220,3 +220,6 @@ reportCallInDefaultInitializer = "warning"
 reportUnnecessaryTypeIgnoreComment = "warning"
 reportImportCycles = "error"
 reportPropertyTypeMismatch = "error"
+
+[tool.codespell]
+builtin = "clear,rare,en-GB_to_en-US"
