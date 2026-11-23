@@ -22,7 +22,7 @@ jobs:
       # The canon default matrix starts at the fleet's 3.11 floor, but this
       # project declares requires-python >=3.12; keep in step with the
       # Programming Language classifiers in pyproject.toml.
-      python-versions: '["3.12", "3.13", "3.14"]'
+      python-versions: '["3.13", "3.14"]'
       # Measured 77.5% on adoption; a point of slack absorbs ordinary churn.
       coverage-floor: 76
       run-preen: true

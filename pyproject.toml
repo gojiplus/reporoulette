@@ -28,7 +28,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -36,7 +35,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Typing :: Typed",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "requests>=2.25.0",
 ]
@@ -75,7 +74,7 @@ filterwarnings = ["error"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 external = ["DOC"]
@@ -171,7 +170,7 @@ exclude = [
     "docs/_build"
 ]
 ignore = ["tests"]
-pythonVersion = "3.12"
+pythonVersion = "3.13"
 pythonPlatform = "All"
 useLibraryCodeForTypes = true
 reportMissingImports = "error"
